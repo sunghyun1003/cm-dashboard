@@ -954,12 +954,24 @@ function setToken(t) { localStorage.setItem('gh_token', t); }
 
 // 데이터 저장 (GitHub PUT)
 async function saveToGitHub() {
-  const payload = {
-    M, LM, MM, D, DL,
-    savedAt: new Date().toISOString()
-  };
+  const statusEl = document.getElementById('upload-status');
+
+  if(!getToken()){
+    statusEl.textContent += ' | ❌ 토큰 없음 — 🔑 토큰 설정 버튼을 클릭하세요';
+    return;
+  }
+
+  const payload = { M, LM, MM, D, DL, savedAt: new Date().toISOString() };
   const body = JSON.stringify(payload);
-  const encoded = btoa(unescape(encodeURIComponent(body)));
+
+  // btoa는 한글 포함 JSON에서 실패할 수 있으므로 안전하게 인코딩
+  let encoded;
+  try {
+    encoded = btoa(unescape(encodeURIComponent(body)));
+  } catch(e) {
+    statusEl.textContent += ' | ❌ 인코딩 오류: ' + e.message;
+    return;
+  }
 
   // 기존 파일 SHA 조회 (업데이트 시 필요)
   let sha = null;
@@ -974,30 +986,51 @@ async function saveToGitHub() {
       const existing = await res.json();
       sha = existing.sha;
     }
+    // 404면 신규 파일 생성 (sha 없이 진행)
   } catch(e) {}
 
-  // 파일 저장
-  const putRes = await fetch(GH_API, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `token ${getToken()}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      message: `데이터 업데이트 ${new Date().toLocaleDateString('ko')}`,
-      content: encoded,
-      ...(sha ? {sha} : {})
-    })
-  });
+  // 파일 저장 (PUT)
+  let putRes;
+  try {
+    putRes = await fetch(GH_API, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${getToken()}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: `데이터 업데이트 ${new Date().toLocaleDateString('ko')}`,
+        content: encoded,
+        ...(sha ? {sha} : {})
+      })
+    });
+  } catch(e) {
+    statusEl.textContent += ' | ❌ 네트워크 오류: ' + e.message;
+    return;
+  }
 
   if (putRes.ok) {
-    document.getElementById('upload-status').textContent +=
-      ' | ✅ GitHub 저장 완료';
+    statusEl.textContent += ' | ✅ GitHub 저장 완료';
   } else {
-    const err = await putRes.json();
-    document.getElementById('upload-status').textContent +=
-      ` | ❌ GitHub 저장 실패: ${err.message}`;
+    let errMsg = putRes.status;
+    try {
+      const errJson = await putRes.json();
+      errMsg = errJson.message || errMsg;
+    } catch(e) {}
+
+    // 상태코드별 안내
+    if(putRes.status === 401) {
+      statusEl.textContent += ' | ❌ 토큰 인증 실패 — 토큰을 다시 확인하세요 (repo 권한 필요)';
+    } else if(putRes.status === 404) {
+      statusEl.textContent += ' | ❌ 저장소를 찾을 수 없음 — cm-dashboard-data 저장소가 있는지 확인하세요';
+    } else if(putRes.status === 409) {
+      statusEl.textContent += ' | ❌ 저장소가 비어있음 — cm-dashboard-data에 README.md를 먼저 만드세요';
+    } else if(putRes.status === 422) {
+      statusEl.textContent += ' | ❌ SHA 오류 — 잠시 후 다시 업로드하세요';
+    } else {
+      statusEl.textContent += ` | ❌ 저장 실패 (${errMsg})`;
+    }
   }
 }
 
@@ -1012,22 +1045,29 @@ async function loadFromGitHub() {
     return;
   }
   try {
-    // raw 콘텐츠 직접 요청
-    const rawUrl = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/${GH_FILE}`;
-    const res = await fetch(rawUrl + '?t=' + Date.now(), {
+    // GitHub API로 파일 내용 가져오기 (private repo 지원)
+    const res = await fetch(GH_API + '?t=' + Date.now(), {
       headers: {
         'Authorization': `token ${getToken()}`,
+        'Accept': 'application/vnd.github.v3+json',
         'Cache-Control': 'no-cache'
       }
     });
 
     if (!res.ok) {
-      statusEl.textContent = '📂 저장된 데이터 없음 — 엑셀 파일을 업로드하세요';
+      if(res.status === 401){
+        statusEl.textContent = '❌ 토큰 인증 실패 — 🔑 토큰 설정을 확인하세요';
+      } else {
+        statusEl.textContent = '📂 저장된 데이터 없음 — 엑셀 파일을 업로드하세요';
+      }
       statusEl.className = 'upload-status';
       return;
     }
 
-    const data = await res.json();
+    // API 응답에서 content(base64) 디코딩
+    const fileInfo = await res.json();
+    const decoded = decodeURIComponent(escape(atob(fileInfo.content.replace(/\n/g, ''))));
+    const data = JSON.parse(decoded);
 
     M.splice(0,  M.length,  ...(data.M  || []));
     LM.splice(0, LM.length, ...(data.LM || []));
