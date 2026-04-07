@@ -961,7 +961,10 @@ async function saveToGitHub() {
     return;
   }
 
-  const payload = { M, LM, MM, D, DL, savedAt: new Date().toISOString() };
+  // D(일별)는 최근 90일만 저장 (GitHub API 파일 크기 1MB 제한)
+  const recentD  = D.slice(-90*5);   // 일별합계 최대 90일×여유
+  const recentDL = DL.slice(-90*5*5); // 일별채널별
+  const payload = { M, LM, MM, D: recentD, DL: recentDL, savedAt: new Date().toISOString() };
   const body = JSON.stringify(payload);
 
   // btoa는 한글 포함 JSON에서 실패할 수 있으므로 안전하게 인코딩
@@ -1046,11 +1049,10 @@ async function loadFromGitHub() {
   }
   try {
     // GitHub API로 파일 내용 가져오기 (private repo 지원)
-    const res = await fetch(GH_API + '?t=' + Date.now(), {
+    const res = await fetch(GH_API, {
       headers: {
         'Authorization': `token ${getToken()}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Cache-Control': 'no-cache'
+        'Accept': 'application/vnd.github.v3+json'
       }
     });
 
@@ -1094,8 +1096,9 @@ async function loadFromGitHub() {
     render();
 
   } catch(err) {
-    statusEl.textContent = '📂 저장된 데이터 없음 — 엑셀 파일을 업로드하세요';
-    statusEl.className = 'upload-status';
+    console.error('loadFromGitHub error:', err);
+    statusEl.textContent = '❌ 로드 오류: ' + err.message + ' — 🔑 토큰을 다시 확인하세요';
+    statusEl.className = 'upload-status err';
   }
 }
 
@@ -1139,6 +1142,8 @@ function render(){
   else if(cTab==='alerts')rAlerts(el);
 }
 // 페이지 로드 시 GitHub에서 데이터 자동 복원
+// 토큰이 localStorage에 있으면 자동 로드 시도
+console.log('토큰 존재:', !!getToken());
 loadFromGitHub();
 </script>
 </body>
