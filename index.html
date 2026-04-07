@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>자동차보험 실적 대시보드</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0e1a;--bg2:#0f1629;--bg3:#131832;--bg4:#1a2040;
+  --border:rgba(99,102,241,.15);--border2:rgba(99,102,241,.08);
+  --accent:#818cf8;--accent2:#6366f1;--accent3:rgba(99,102,241,.12);
+  --green:#34d399;--red:#f87171;--yellow:#f59e0b;--cyan:#06b6d4;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--gold:#fbbf24;
+}
+body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.hdr{background:linear-gradient(135deg,var(--bg2),var(--bg4));padding:18px 28px 0;border-bottom:1px solid var(--border)}
+.hdr-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.hdr-left h1{font-size:18px;font-weight:800;color:#fff}
+.hdr-left .sub{font-size:11px;color:var(--text3);margin-top:2px}
+.month-nav{display:flex;align-items:center;gap:8px}
+.mnav-btn{background:var(--accent3);border:1px solid var(--border);color:var(--accent);border-radius:8px;padding:5px 11px;cursor:pointer;font-size:14px;font-weight:700;font-family:inherit;line-height:1;transition:.15s}
+.mnav-btn:hover{background:rgba(99,102,241,.25)}
+.mnav-btn:disabled{opacity:.3;cursor:default}
+.mnav-label{font-size:14px;font-weight:800;color:#fff;min-width:85px;text-align:center}
+.mnav-today{font-size:11px;color:var(--accent);cursor:pointer;font-weight:600;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--accent3)}
+.tabs{display:flex;gap:0;margin-top:12px}
+.tab{padding:9px 16px;border:none;background:0;color:var(--text3);font-weight:600;font-size:13px;cursor:pointer;border-bottom:3px solid transparent;font-family:inherit;transition:.2s}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab:hover:not(.active){color:#a5b4fc}
+.upload-bar{display:flex;align-items:center;gap:10px;padding:9px 28px;background:linear-gradient(135deg,#0d1225,#111827);border-bottom:1px solid rgba(99,102,241,.12)}
+.upload-btn{display:inline-flex;align-items:center;gap:7px;padding:7px 16px;background:linear-gradient(135deg,#4f46e5,#6366f1);border:none;border-radius:9px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:.2s}
+.upload-btn:hover{background:linear-gradient(135deg,#4338ca,#4f46e5)}
+.upload-status{font-size:11px;color:var(--text3);flex:1}
+.upload-status.ok{color:var(--green)}
+.upload-status.err{color:var(--red)}
+#file-input{display:none}
+.data-badges{display:flex;gap:8px;flex-shrink:0}
+.dbadge{font-size:10px;font-weight:600;padding:3px 8px;border-radius:6px;background:rgba(99,102,241,.1);border:1px solid var(--border);color:var(--text3)}
+.dbadge.active{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.3);color:var(--green)}
+.ct{padding:18px 28px;max-width:1440px;margin:0 auto}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;text-align:center;gap:16px}
+.empty-icon{font-size:48px}
+.empty-title{font-size:18px;font-weight:700;color:var(--text2)}
+.empty-desc{font-size:13px;color:var(--text3);line-height:1.8;max-width:480px}
+.kr{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:16px}
+.kp{background:linear-gradient(135deg,var(--bg3),var(--bg4));border:1px solid var(--border);border-radius:14px;padding:15px 17px}
+.kp.k1{border-color:rgba(251,191,36,.35);background:linear-gradient(135deg,#150f00,#1e1900)}
+.kp.k2{border-color:rgba(129,140,248,.35)}
+.kp.k3{border-color:rgba(6,182,212,.35)}
+.kp-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.kp-lb{font-size:11px;color:var(--text3);font-weight:600}
+.kp-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px}
+.kp-badge.pred{background:rgba(245,158,11,.15);color:var(--yellow)}
+.vl{font-size:22px;font-weight:800;line-height:1.2}
+.kp.k1 .vl{color:var(--gold)}
+.kp.k2 .vl{color:var(--accent)}
+.kp.k3 .vl{color:var(--cyan)}
+.vl .un{font-size:12px;font-weight:400;color:var(--text3);margin-left:2px}
+.ch{font-size:11px;margin-top:4px;font-weight:600;display:flex;gap:10px;flex-wrap:wrap}
+.up{color:var(--green)}.dn{color:var(--red)}.flat{color:var(--text3)}
+.cd{background:linear-gradient(135deg,var(--bg3),var(--bg4));border:1px solid var(--border2);border-radius:14px;padding:16px;margin-bottom:12px}
+.cd-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px}
+.cd-head h3{font-size:13px;font-weight:700;display:flex;align-items:center;gap:7px}
+.cd-head h3 .s{font-size:11px;color:var(--text3);font-weight:400}
+.cw{position:relative;height:250px}
+.cw.lg{height:300px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{padding:7px 9px;text-align:left;color:var(--text3);font-weight:600;border-bottom:2px solid var(--border);font-size:11px;white-space:nowrap}
+th.r,td.r{text-align:right}
+td{padding:7px 9px;border-bottom:1px solid var(--border2);white-space:nowrap}
+tr:hover td{background:rgba(99,102,241,.05)}
+.pred-tr td{color:var(--yellow)}
+.fr{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.fr-lbl{font-size:11px;color:var(--text3);font-weight:600}
+.fb{padding:5px 11px;border-radius:7px;border:1px solid var(--border);background:0;color:var(--text2);font-weight:600;font-size:11px;cursor:pointer;font-family:inherit;transition:.15s}
+.fb.ac{border-color:var(--accent);background:var(--accent3);color:var(--accent)}
+.ib{background:var(--accent3);border:1px solid var(--border);border-radius:11px;padding:11px 15px;margin-bottom:12px}
+.ib .tt{font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px}
+.ib .ds{font-size:11px;color:var(--text2);line-height:1.7}
+.ac2{background:linear-gradient(135deg,var(--bg3),var(--bg4));border:1px solid var(--border2);border-radius:13px;padding:13px;margin-bottom:8px;display:flex;flex-direction:column;gap:7px}
+.ac2.inc{border-left:4px solid var(--green)}.ac2.dec{border-left:4px solid var(--red)}
+.bd{padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700}
+.bd.inc{background:rgba(52,211,153,.15);color:var(--green)}
+.bd.dec{background:rgba(248,113,113,.15);color:var(--red)}
+.act{background:rgba(99,102,241,.08);border-radius:7px;padding:8px 11px;font-size:11px;color:#cbd5e1;line-height:1.5;border-left:3px solid var(--accent2)}
+.metric-row{display:flex;gap:12px;font-size:11px;color:var(--text2);flex-wrap:wrap}
+.metric-row strong{color:var(--text)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:900px){.g2{grid-template-columns:1fr}.kr{grid-template-columns:repeat(2,1fr)}}
+.range-sel{display:flex;gap:4px}
+.rb{padding:4px 9px;border-radius:6px;border:1px solid var(--border);background:0;color:var(--text3);font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s}
+.rb.ac{border-color:var(--accent);background:var(--accent3);color:var(--accent)}
+.pred-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;margin-bottom:14px}
+.pc{background:linear-gradient(135deg,#0f1400,#1a1f00);border:1px solid rgba(245,158,11,.25);border-radius:12px;padding:14px}
+.pc .lb{font-size:10px;color:var(--text3);margin-bottom:5px;font-weight:600}
+.pc .val{font-size:20px;font-weight:800;color:var(--yellow)}
+.pc .det{font-size:10px;color:var(--text3);margin-top:3px}
+.day-badge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:4px;margin-left:4px;font-weight:600}
+.day-pay{background:rgba(245,158,11,.2);color:var(--yellow)}
+.day-wk{background:rgba(100,116,139,.2);color:var(--text3)}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-top">
+    <div class="hdr-left">
+      <h1>자동차보험 실적 대시보드</h1>
+      <div class="sub" id="hdr-sub">데이터를 업로드하면 대시보드가 활성화됩니다</div>
+    </div>
+    <div class="month-nav" id="month-nav-wrap" style="display:none">
+      <button class="mnav-btn" id="mnav-prev">&#8592;</button>
+      <span class="mnav-label" id="mnav-label">-</span>
+      <button class="mnav-btn" id="mnav-next">&#8594;</button>
+      <button class="mnav-today" id="mnav-today">최신</button>
+    </div>
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="monthly">월별 현황</button>
+    <button class="tab" data-tab="daily">일별 현황</button>
+    <button class="tab" data-tab="channel">채널 분석</button>
+    <button class="tab" data-tab="forecast">예측</button>
+    <button class="tab" data-tab="alerts">이상 감지</button>
+  </div>
+</div>
+<div class="upload-bar">
+  <button class="upload-btn" onclick="document.getElementById('file-input').click()">📂 엑셀 파일 업로드</button>
+  <input type="file" id="file-input" accept=".xlsx" onchange="handleUpload(event)">
+  <div class="upload-status" id="upload-status">업로드된 파일 없음 — 엑셀 양식에 데이터 입력 후 업로드하세요</div>
+  <div class="data-badges">
+    <span class="dbadge" id="badge-monthly">월별 0개월</span>
+    <span class="dbadge" id="badge-daily">일별 0일</span>
+  </div>
+</div>
+<div class="ct" id="ct"></div>
+<script>
+// ── 데이터 (업로드로만 채워짐 - 하드코딩 데이터 없음)
+let M=[], LM=[], MM=[], D=[], DL=[];
+const LS=['오가닉','퍼포먼스','제휴','비교추천 플랫폼','채널 시너지'];
+const LC=['#818cf8','#34d399','#f59e0b','#f87171','#06b6d4'];
+
+// ── 특수 구간 정의 (예측 계산 로직용 - UI 미표시)
+const ANOMALY_PERIODS={
+  mkt_min:{months:['2024-11','2024-12','2025-01','2025-02','2025-03','2025-04'],label:'마케팅 최소화'},
+  merger: {months:['2025-10','2025-11','2025-12','2026-01','2026-02'],label:'합병 불안정'},
+};
+function isAnomalyMonth(m){return Object.values(ANOMALY_PERIODS).some(p=>p.months.includes(m));}
+
+// ── 날짜 유틸
+const TODAY_YM=(()=>{const t=new Date();return t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0');})();
+const YESTERDAY=(()=>{const t=new Date();t.setDate(t.getDate()-1);return t.toISOString().substring(0,10);})();
+
+function getLastDay(ym){const[y,m]=ym.split('-').map(Number);return new Date(y,m,0).getDate();}
+function isWeekend(d){return[0,6].includes(new Date(d).getDay());}
+function isPaydate(d){const day=parseInt(d.split('-')[2]);const last=getLastDay(d.substring(0,7));return day===10||day===20||day===last;}
+function dayType(d){if(isPaydate(d))return'pay';if(isWeekend(d))return'weekend';return'biz';}
+function getMonthComposition(ym){const last=getLastDay(ym);let biz=0,wk=0,pay=0;for(let d=1;d<=last;d++){const ds=`${ym}-${String(d).padStart(2,'0')}`;const t=dayType(ds);if(t==='pay')pay++;else if(t==='weekend')wk++;else biz++;}return{biz,wk,pay};}
+
+// ── 데이터 접근
+function getMonthData(ym){return M.find(r=>r.m===ym);}
+function getLMData(ym){return LM.filter(r=>r.m===ym);}
+function getMMData(ym){return MM.filter(r=>r.m===ym);}
+function hasData(){return M.length>0;}
+
+// ── 포맷
+const fmt=n=>{if(n==null)return'-';const a=Math.abs(n);if(a>=1e12)return(n/1e12).toFixed(2)+'조';if(a>=1e8)return(n/1e8).toFixed(1)+'억';if(a>=1e4)return(n/1e4).toFixed(0)+'만';return n.toLocaleString();};
+const fN=n=>n!=null?Math.round(n).toLocaleString():'-';
+const pct=(a,b)=>b?((a/b-1)*100).toFixed(1):'-';
+const pctFmt=(a,b)=>{if(!b)return'';const v=(a/b-1)*100;return(v>=0?'+':'')+v.toFixed(1)+'%';};
+const mLabel=m=>m?m.substring(2):'';
+
+// ── getDisplayData
+function getDisplayData(ym){
+  const real=getMonthData(ym);
+  if(real)return{...real,isPred:false};
+  if(M.length===0)return null;
+  const pred=computePrediction(ym);
+  if(!pred)return null;
+  return{m:ym,nc:pred.nc,rc:pred.rc,np:pred.np,rp:pred.rp,tp:pred.tp||(pred.np+pred.rp),isPred:true};
+}
+
+// ── KPI 카드
+function kpiCard(klass,label,value,unit,mom,yoy,isPred){
+  const mS=mom&&mom!=='-'?`<span class="${parseFloat(mom)>=0?'up':'dn'}">${parseFloat(mom)>=0?'▲':'▼'} ${Math.abs(parseFloat(mom))}% 전월</span>`:'';
+  const yS=yoy&&yoy!=='-'?`<span class="${parseFloat(yoy)>=0?'up':'dn'}">${parseFloat(yoy)>=0?'▲':'▼'} ${Math.abs(parseFloat(yoy))}% 전년</span>`:'';
+  const pb=isPred?'<span class="kp-badge pred">예측</span>':'';
+  return`<div class="kp ${klass}"><div class="kp-top"><div class="kp-lb">${label}</div>${pb}</div><div class="vl">${value}<span class="un">${unit}</span></div><div class="ch">${mS}${yS}</div></div>`;
+}
+
+// ── 차트 옵션
+function chartOpts({stacked=false,yFmt=false}={}){
+  return{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{labels:{color:'#94a3b8',font:{size:10}}},tooltip:{callbacks:yFmt?{label:c=>`${c.dataset.label}: ${fmt(c.raw)}`}:{}}},
+    scales:{x:{stacked,ticks:{color:'#64748b',font:{size:9}},grid:{color:'rgba(99,102,241,.05)'}},
+            y:{stacked,ticks:{color:'#64748b',font:{size:9},callback:yFmt?v=>fmt(v):undefined},grid:{color:'rgba(99,102,241,.05)'}}}};
+}
+
+// ── 범위 버튼
+function buildRangeBtn(id,values,cur,onChange){
+  const el=document.getElementById(id);if(!el)return;
+  el.innerHTML=values.map(v=>`<button class="rb${cur===v?' ac':''}" onclick="(${onChange.toString()})(${v})">${v===0?'전체':v+'개월'}</button>`).join('');
+}
+
+// ── 빈 상태
+function renderEmpty(el,msg){
+  el.innerHTML=`<div class="empty-state"><div class="empty-icon">📂</div><div class="empty-title">데이터 없음</div><div class="empty-desc">${msg||'엑셀 파일을 업로드하면 데이터가 표시됩니다'}</div></div>`;
+}
+
+// ── 상태 변수
+let ALL_MONTHS=[];
+let selMonth=TODAY_YM;
+let cTab='monthly';
+let charts={};
+let cRange=12;
+let selL='전체';
+
+// ── buildAllMonths
+function buildAllMonths(){
+  if(M.length===0)return[];
+  const months=[...M.map(r=>r.m)];
+  const last=months[months.length-1];
+  const[ly,lm]=last.split('-').map(Number);
+  let[cy,cm]=[ly,lm];
+  for(let i=0;i<18;i++){
+    cm++;if(cm>12){cm=1;cy++;}
+    const ym=cy+'-'+String(cm).padStart(2,'0');
+    if(!months.includes(ym))months.push(ym);
+    if(ym>=TODAY_YM){
+      let[ay,am]=[cy,cm];
+      for(let j=0;j<2;j++){am++;if(am>12){am=1;ay++;}months.push(ay+'-'+String(am).padStart(2,'0'));}
+      break;
+    }
+  }
+  return[...new Set(months)].sort();
+}
+
+function dc(){Object.values(charts).forEach(c=>{try{c.destroy();}catch(e){}});charts={};}
+
+// ── 네비게이터
+function updateNav(){
+  if(!hasData()){
+    document.getElementById('month-nav-wrap').style.display='none';
+    document.getElementById('hdr-sub').textContent='데이터를 업로드하면 대시보드가 활성화됩니다';
+    return;
+  }
+  document.getElementById('month-nav-wrap').style.display='flex';
+  document.getElementById('mnav-label').textContent=selMonth;
+  const idx=ALL_MONTHS.indexOf(selMonth);
+  document.getElementById('mnav-prev').disabled=idx<=0;
+  const[ty,tm]=TODAY_YM.split('-').map(Number);
+  let[ay,am]=[ty,tm+2];if(am>12){am-=12;ay++;}
+  const maxYm=ay+'-'+String(am).padStart(2,'0');
+  document.getElementById('mnav-next').disabled=selMonth>=maxYm||idx>=ALL_MONTHS.length-1;
+  const isPred=!getMonthData(selMonth);
+  document.getElementById('hdr-sub').textContent=
+    `기준: ${selMonth.replace('-','년 ')}월 | 최신실적: ${YESTERDAY} | ${isPred?'예측':'실데이터'}`;
+}
+document.getElementById('mnav-prev').onclick=()=>{const idx=ALL_MONTHS.indexOf(selMonth);if(idx>0){selMonth=ALL_MONTHS[idx-1];updateNav();render();}};
+document.getElementById('mnav-next').onclick=()=>{const idx=ALL_MONTHS.indexOf(selMonth);if(idx<ALL_MONTHS.length-1){selMonth=ALL_MONTHS[idx+1];updateNav();render();}};
+document.getElementById('mnav-today').onclick=()=>{selMonth=TODAY_YM;updateNav();render();};
+document.getElementById('tabs').addEventListener('click',e=>{
+  if(!e.target.classList.contains('tab'))return;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  e.target.classList.add('active');cTab=e.target.dataset.tab;render();
+});
+
+// ══════════════════════════════════════════════
+//  엑셀 업로드 & 파싱
+// ══════════════════════════════════════════════
+function handleUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'binary', cellDates:false});
+
+      function parseSheet(wsName) {
+        const ws = wb.Sheets[wsName];
+        if (!ws) return null;
+        const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:0, raw:true});
+        if (raw.length < 2) return null;
+        const headerRow = raw[1];
+        const dates = [];
+        for (let ci=1; ci<headerRow.length; ci++) {
+          const v = headerRow[ci];
+          if (!v) continue;
+          let dstr = '';
+          if (typeof v === 'string' && v.match(/\d{4}-\d{2}-\d{2}/)) {
+            dstr = v.substring(0,10);
+          } else if (typeof v === 'number') {
+            const d = new Date(Math.round((v-25569)*86400*1000));
+            dstr = d.toISOString().substring(0,10);
+          } else if (v instanceof Date) {
+            dstr = v.toISOString().substring(0,10);
+          }
+          if (dstr) dates.push({col:ci, date:dstr});
+        }
+        const rowMap = {};
+        for (let ri=2; ri<raw.length; ri++) {
+          const row = raw[ri];
+          const name = String(row[0]||'').trim();
+          if (!name || name==='구분') continue;
+          rowMap[name] = {};
+          dates.forEach(({col, date}) => {
+            rowMap[name][date] = Number(row[col])||0;
+          });
+        }
+        return {dates, rowMap};
+      }
+
+      const ncSheet = parseSheet('신규_건수');
+      const nmSheet = parseSheet('신규_매출');
+      const rcSheet = parseSheet('갱신_건수');
+      const rmSheet = parseSheet('갱신_매출');
+
+      if (!ncSheet) throw new Error('신규_건수 시트를 찾을 수 없습니다');
+
+      // ── 날짜 목록
+      const allDates = [...new Set([
+        ...(ncSheet?.dates||[]).map(d=>d.date),
+        ...(rcSheet?.dates||[]).map(d=>d.date),
+      ])].sort();
+
+      // ── 월별 합산 계산 (D → M, LM 생성)
+      const monthSet = [...new Set(allDates.map(d=>d.substring(0,7)))].sort();
+      const LS_ORDER = ['오가닉','퍼포먼스','제휴','비교추천 플랫폼','채널 시너지'];
+      const newM = [], newLM = [];
+
+      monthSet.forEach(ym => {
+        const days = allDates.filter(d=>d.startsWith(ym));
+        const sum = (sheet, key) => days.reduce((s,dt)=>s+(sheet?.rowMap?.[key]?.[dt]||0), 0);
+
+        // 월별 합계 (M)
+        const nc = sum(ncSheet,'합계') || sum(ncSheet,'총합');
+        const rc = sum(rcSheet,'총합') || sum(rcSheet,'합계');
+        const np = sum(nmSheet,'합계');
+        const rp = sum(rmSheet,'합계');
+        if (nc+rc+np+rp > 0) newM.push({m:ym, nc, rc, np, rp});
+
+        // 월별 대분류 (LM)
+        LS_ORDER.forEach(l => {
+          const lnc = sum(ncSheet, l);
+          const lrc = sum(rcSheet, l);
+          const lnp = sum(nmSheet, l);
+          const lrp = sum(rmSheet, l);
+          newLM.push({m:ym, l, nc:lnc, rc:lrc, np:lnp, rp:lrp});
+        });
+      });
+
+      // ── 일별 합계 (D) & 일별 대분류 (DL)
+      const newD = allDates.map(dt => ({
+        d:dt,
+        nc: ncSheet?.rowMap?.['합계']?.[dt] || ncSheet?.rowMap?.['총합']?.[dt] || 0,
+        rc: rcSheet?.rowMap?.['총합']?.[dt] || rcSheet?.rowMap?.['합계']?.[dt] || 0,
+        np: nmSheet?.rowMap?.['합계']?.[dt] || 0,
+        rp: rmSheet?.rowMap?.['합계']?.[dt] || 0,
+      }));
+      const newDL = [];
+      allDates.forEach(dt => {
+        LS_ORDER.forEach(l => {
+          newDL.push({d:dt, l,
+            nc: ncSheet?.rowMap?.[l]?.[dt]||0,
+            rc: rcSheet?.rowMap?.[l]?.[dt]||0,
+            np: nmSheet?.rowMap?.[l]?.[dt]||0,
+            rp: rmSheet?.rowMap?.[l]?.[dt]||0,
+          });
+        });
+      });
+
+      // ── 전역 변수 갱신
+      M.splice(0, M.length, ...newM);
+      LM.splice(0, LM.length, ...newLM);
+      D.splice(0, D.length, ...newD);
+      DL.splice(0, DL.length, ...newDL);
+
+      // ── ALL_MONTHS 재빌드
+      ALL_MONTHS.splice(0, ALL_MONTHS.length, ...buildAllMonths());
+
+      // ── selMonth: 데이터 최신월 또는 오늘 월
+      const latestDataYm = newM.length > 0 ? newM[newM.length-1].m : null;
+      if (latestDataYm && latestDataYm >= TODAY_YM) {
+        selMonth = TODAY_YM;
+      } else if (latestDataYm) {
+        selMonth = TODAY_YM;
+      }
+
+      // ── UI 갱신
+      const dr = allDates.length>0 ? `${allDates[0]} ~ ${allDates[allDates.length-1]}` : '-';
+      document.getElementById('upload-status').textContent =
+        `✅ ${file.name} — ${dr} | 월별 ${newM.length}개월 / 일별 ${newD.length}일`;
+      document.getElementById('upload-status').className = 'upload-status ok';
+      document.getElementById('badge-monthly').textContent = `월별 ${newM.length}개월`;
+      document.getElementById('badge-monthly').className = newM.length>0 ? 'dbadge active' : 'dbadge';
+      document.getElementById('badge-daily').textContent = `일별 ${newD.length}일`;
+      document.getElementById('badge-daily').className = newD.length>0 ? 'dbadge active' : 'dbadge';
+
+      updateNav();
+      render();
+
+    } catch(err) {
+      document.getElementById('upload-status').textContent = '❌ 오류: ' + err.message;
+      document.getElementById('upload-status').className = 'upload-status err';
+      console.error(err);
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+
+// ══ 예측 로직 (보존) ══
+function computePrediction(targetYm){
+  // ── 예측 구조: 합산매출 = [A] 가입기반 매출 + [B] 월납 분납 매출
+  // ── 건수 예측: 3월 실적 × 계절성(정상구간 2023~2024 동일월/3월 비율)
+  // ── 매출 A: 예측 건수 × 비결제일 건당 단가(2~3월 평균)
+  // ── 매출 B: 결제일 스파이크 추세(2~3월 평균, 이후 +1%/월)
+
+  const baseM = M[M.length-1]; // 2026-03
+  const [ty, tm] = targetYm.split('-').map(Number);
+  const baseMonth = parseInt(baseM.m.split('-')[1]); // 3
+
+  // ── 1. 계절성 (2023,2024 기준월→예측월 비율)
+  let r_nc=[], r_rc=[];
+  ['2023','2024'].forEach(y=>{
+    const bk=`${y}-${String(baseMonth).padStart(2,'0')}`;
+    const tk=`${y}-${String(tm).padStart(2,'0')}`;
+    const bm=M.find(r=>r.m===bk), tgm=M.find(r=>r.m===tk);
+    if(bm&&tgm){ r_nc.push(tgm.nc/bm.nc); r_rc.push(tgm.rc/bm.rc); }
+  });
+  const avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
+  const sNC=avg(r_nc), sRC=avg(r_rc);
+
+  // ── 2. 건수 예측
+  const predNC = Math.round(baseM.nc * sNC);
+  const predRC = Math.round(baseM.rc * sRC);
+
+  // ── 3. 비결제일 건당 단가 (2~3월 통합 평균)
+  const baseMonths=['2026-02','2026-03'];
+  let sumNP=0, sumRP=0, sumNC=0, sumRC=0;
+  D.forEach(r=>{
+    if(!baseMonths.some(bm=>r.d.startsWith(bm))) return;
+    const day=parseInt(r.d.split('-')[2]);
+    const ym=r.d.substring(0,7);
+    const y2=parseInt(ym.split('-')[0]), m2=parseInt(ym.split('-')[1]);
+    const last=new Date(y2,m2,0).getDate();
+    if(day===10||day===20||day===last) return; // 결제일 제외
+    sumNP+=r.np; sumRP+=r.rp;
+  });
+  // 비결제일 건당 = (비결제일 총매출) / (해당월 총건수)
+  baseMonths.forEach(bm=>{
+    const rm=M.find(r=>r.m===bm);
+    if(rm){ sumNC+=rm.nc; sumRC+=rm.rc; }
+  });
+  const npPer = sumNC>0 ? sumNP/sumNC : 0;
+  const rpPer = sumRC>0 ? sumRP/sumRC : 0;
+
+  // ── 4. 가입 기반 매출 A
+  const aNP = predNC * npPer;
+  const aRP = predRC * rpPer;
+
+  // ── 5. 월납 분납 매출 B (결제일 스파이크)
+  // 2~3월 평균을 기준으로, 예측월은 +1%/월 증가 적용
+  let payTotal23=0;
+  ['2026-02','2026-03'].forEach(bm=>{
+    D.forEach(r=>{
+      if(!r.d.startsWith(bm)) return;
+      const day=parseInt(r.d.split('-')[2]);
+      const y2=parseInt(bm.split('-')[0]), m2=parseInt(bm.split('-')[1]);
+      const last=new Date(y2,m2,0).getDate();
+      if(day===10||day===20||day===last) payTotal23+=r.np+r.rp;
+    });
+  });
+  const payBase = payTotal23 / 2; // 2~3월 평균
+  const monthsAhead = tm - baseMonth; // 기준월(3)로부터 몇 달 후
+  const payB = payBase * Math.pow(1.01, monthsAhead);
+
+  // ── 6. 예측월 구성
+  const comp = getMonthComposition(targetYm);
+
+  return {
+    m: targetYm, fc: true,
+    nc: predNC,
+    rc: predRC,
+    np: Math.round(aNP + payB * 0.45), // np 비율 (결제일 신규:갱신 ≈ 45:55 기준)
+    rp: Math.round(aRP + payB * 0.55),
+    tp: Math.round(aNP + aRP + payB),
+    comp,
+    season: {nc:sNC, rc:sRC},
+    breakdown: {
+      ncPer: Math.round(npPer/1e4), rcPer: Math.round(rpPer/1e4),
+      payB: Math.round(payB/1e8*10)/10,
+      gaipBase: Math.round((aNP+aRP)/1e8*10)/10
+    }
+  };
+}
+
+function generateForecasts(){
+  // 예측 시작: 오늘 월 (전일까지 실적 → 오늘 당월이 예측 대상)
+  const startYm = TODAY_YM;
+  // 오늘 월부터 3개월
+  const [sy, sm] = startYm.split('-').map(Number);
+  const months = [];
+  for(let i=0; i<3; i++){
+    let nm = sm+i, ny = sy;
+    if(nm>12){ nm-=12; ny++; }
+    months.push(ny+'-'+String(nm).padStart(2,'0'));
+  }
+  return months.map(mo=>computePrediction(mo));
+}
+// ══ 월별 현황 ══
+function rMonthly(el){
+  if(!hasData()){renderEmpty(el);return;}
+  const cur=getDisplayData(selMonth);
+  if(!cur){renderEmpty(el,'선택한 월의 데이터가 없습니다');return;}
+  const[cy,cm]=selMonth.split('-').map(Number);
+  const prevYm=cm===1?`${cy-1}-12`:`${cy}-${String(cm-1).padStart(2,'0')}`;
+  const yoyYm=`${cy-1}-${String(cm).padStart(2,'0')}`;
+  const prev=getDisplayData(prevYm);
+  const yoy=getMonthData(yoyYm);
+  const tp=cur.tp||(cur.np+cur.rp),tc=cur.nc+cur.rc;
+  const ptp=prev?(prev.tp||(prev.np+prev.rp)):null;
+  const ytp=yoy?yoy.np+yoy.rp:null;
+  const ptc=prev?prev.nc+prev.rc:null;
+  const anomalyBanner='';
+  const endIdx=ALL_MONTHS.indexOf(selMonth);
+  const startIdx=cRange===0?0:Math.max(0,endIdx-cRange+1);
+  const rangeM=ALL_MONTHS.slice(startIdx,endIdx+1);
+  el.innerHTML=`${anomalyBanner}
+  <div class="kr">
+    ${kpiCard('k1','합산 매출',fmt(tp),'원',pct(tp,ptp),yoy?pct(tp,ytp):null,cur.isPred)}
+    ${kpiCard('k2','신규 가입',fN(cur.nc),'건',pct(cur.nc,prev?.nc),yoy?pct(cur.nc,yoy.nc):null,cur.isPred)}
+    ${kpiCard('k3','갱신 가입',fN(cur.rc),'건',pct(cur.rc,prev?.rc),yoy?pct(cur.rc,yoy.rc):null,cur.isPred)}
+    <div class="kp"><div class="kp-top"><div class="kp-lb">총 가입건수</div></div>
+      <div class="vl" style="color:var(--green)">${fN(tc)}<span class="un">건</span></div>
+      <div class="ch">${ptc?`<span class="${tc>=ptc?'up':'dn'}">${pctFmt(tc,ptc)} 전월</span>`:''}</div></div>
+    <div class="kp"><div class="kp-top"><div class="kp-lb">신규 매출</div></div>
+      <div class="vl" style="color:var(--text)">${fmt(cur.np)}</div>
+      <div class="ch">${prev?`<span class="${cur.np>=prev.np?'up':'dn'}">${pctFmt(cur.np,prev.np)} 전월</span>`:''}</div></div>
+    <div class="kp"><div class="kp-top"><div class="kp-lb">갱신 매출 <span style="font-size:10px;font-weight:400;color:var(--text3)">(비중 ${tp?((cur.rp/tp)*100).toFixed(1):0}%)</span></div></div>
+      <div class="vl" style="color:var(--text)">${fmt(cur.rp)}</div>
+      <div class="ch">${prev?`<span class="${cur.rp>=prev.rp?'up':'dn'}">${pctFmt(cur.rp,prev.rp)} 전월</span>`:''}</div></div>
+  </div>
+  <div class="cd"><div class="cd-head"><h3>합산 매출 추이</h3><div class="range-sel" id="rng-tp"></div></div>
+    <div class="cw lg"><canvas id="c-tp"></canvas></div></div>
+  <div class="g2">
+    <div class="cd"><div class="cd-head"><h3>신규 건수 추이</h3></div><div class="cw"><canvas id="c-nc"></canvas></div></div>
+    <div class="cd"><div class="cd-head"><h3>갱신 건수 추이</h3></div><div class="cw"><canvas id="c-rc"></canvas></div></div>
+  </div>
+  <div class="cd"><div class="cd-head"><h3>월별 상세 실적표</h3></div>
+    <div style="overflow-x:auto"><table id="t-monthly"></table></div></div>`;
+
+  buildRangeBtn('rng-tp',[3,6,12,0],cRange,v=>{cRange=v;render();});
+
+  const fcasts=generateForecasts();
+  const allData=[...rangeM.map(m=>{const r=getMonthData(m);return{m,np:r?.np||null,rp:r?.rp||null,tp:r?(r.np+r.rp):null,nc:r?.nc,rc:r?.rc,fc:false};}),
+    ...fcasts.map(f=>({m:f.m,np:f.np,rp:f.rp,tp:f.tp||(f.np+f.rp),nc:f.nc,rc:f.rc,fc:true}))];
+  const labels=allData.map(d=>mLabel(d.m));
+
+  charts['c-tp']=new Chart(document.getElementById('c-tp'),{type:'bar',
+    data:{labels,datasets:[
+      {label:'신규매출',data:allData.map(d=>d.fc?null:d.np),backgroundColor:'rgba(129,140,248,.65)',borderRadius:4,order:2},
+      {label:'갱신매출',data:allData.map(d=>d.fc?null:d.rp),backgroundColor:'rgba(52,211,153,.45)',borderRadius:4,order:2},
+      {label:'예측',data:allData.map(d=>d.fc?d.tp:null),backgroundColor:'rgba(245,158,11,.5)',borderRadius:4,order:2},
+      {label:'합산',type:'line',data:allData.map(d=>d.fc?null:d.tp),borderColor:'#e2e8f0',borderWidth:2,pointRadius:2,tension:.3,fill:false,order:1},
+    ]},options:chartOpts({stacked:true,yFmt:true})});
+
+  charts['c-nc']=new Chart(document.getElementById('c-nc'),{type:'line',
+    data:{labels:rangeM.map(mLabel),datasets:[{label:'신규',data:rangeM.map(m=>getMonthData(m)?.nc),
+      borderColor:'#818cf8',backgroundColor:'rgba(129,140,248,.1)',fill:true,tension:.3,pointRadius:2.5,borderWidth:2}]},options:chartOpts()});
+
+  charts['c-rc']=new Chart(document.getElementById('c-rc'),{type:'line',
+    data:{labels:rangeM.map(mLabel),datasets:[{label:'갱신',data:rangeM.map(m=>getMonthData(m)?.rc),
+      borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.1)',fill:true,tension:.3,pointRadius:2.5,borderWidth:2}]},options:chartOpts()});
+
+  const tbl=document.getElementById('t-monthly');
+  const fcastMap={};fcasts.forEach(f=>fcastMap[f.m]=f);
+  tbl.innerHTML=`<thead><tr><th>월</th><th class="r">합산매출</th><th class="r">전월</th><th class="r">전년</th>
+    <th class="r">신규</th><th class="r">전월</th><th class="r">갱신</th><th class="r">전월</th></tr></thead>
+  <tbody>${[...rangeM].reverse().map(m=>{
+    const r=getMonthData(m)||fcastMap[m];if(!r)return'';
+    const isPred=!getMonthData(m);
+    const tp2=(r.tp)||(r.np+r.rp);
+    const[cy2,cm2]=m.split('-').map(Number);
+    const pm=cm2===1?`${cy2-1}-12`:`${cy2}-${String(cm2-1).padStart(2,'0')}`;
+    const ym2=`${cy2-1}-${String(cm2).padStart(2,'0')}`;
+    const pr=getMonthData(pm);const yr=getMonthData(ym2);
+    const ptp2=pr?pr.np+pr.rp:null;const ytp2=yr?yr.np+yr.rp:null;
+    return`<tr class="${isPred?'pred-tr':''}">`+
+      `<td>${m}${isPred?' <span style="font-size:9px;color:var(--yellow)">예측</span>':''}</td>`+
+      `<td class="r" style="font-weight:700;color:${isPred?'var(--yellow)':'var(--gold)'}">${fmt(tp2)}</td>`+
+      `<td class="r"><span class="${ptp2&&tp2>=ptp2?'up':'dn'}" style="font-size:11px">${ptp2?pctFmt(tp2,ptp2):'-'}</span></td>`+
+      `<td class="r"><span class="${ytp2&&tp2>=ytp2?'up':'dn'}" style="font-size:11px">${ytp2?pctFmt(tp2,ytp2):'-'}</span></td>`+
+      `<td class="r">${fN(r.nc)}</td><td class="r" style="font-size:11px;color:var(--text3)">${pr?pctFmt(r.nc,pr.nc):'-'}</td>`+
+      `<td class="r">${fN(r.rc)}</td><td class="r" style="font-size:11px;color:var(--text3)">${pr?pctFmt(r.rc,pr.rc):'-'}</td></tr>`;
+  }).join('')}</tbody>`;
+}
+
+// ══ 일별 현황 ══
+function rDaily(el){
+  if(D.length===0){renderEmpty(el,'일별 데이터를 포함한 엑셀 파일을 업로드하면 일별 현황이 표시됩니다');return;}
+  const avail=[...new Set(D.map(r=>r.d.substring(0,7)))].sort();
+  if(!avail.includes(selMonth))selMonth=avail[avail.length-1];
+  const selDays=D.filter(r=>r.d.startsWith(selMonth));
+  const bizDays=selDays.filter(r=>dayType(r.d)==='biz');
+  const totNC=selDays.reduce((s,r)=>s+r.nc,0),totRC=selDays.reduce((s,r)=>s+r.rc,0);
+  const totTP=selDays.reduce((s,r)=>s+r.np+r.rp,0);
+  const avgBizNC=bizDays.length?bizDays.reduce((s,r)=>s+r.nc,0)/bizDays.length:0;
+
+  el.innerHTML=`
+  <div class="fr"><span class="fr-lbl">월:</span>
+    ${avail.map(m=>`<button class="fb${selMonth===m?' ac':''}" onclick="selMonth='${m}';render()">${mLabel(m)}</button>`).join('')}
+  </div>
+  <div class="kr">
+    <div class="kp k1"><div class="kp-top"><div class="kp-lb">합산 매출</div></div>
+      <div class="vl" style="color:var(--gold)">${fmt(totTP)}</div></div>
+    <div class="kp k2"><div class="kp-top"><div class="kp-lb">신규 건수</div></div>
+      <div class="vl">${fN(totNC)}<span class="un">건</span></div>
+      <div class="ch"><span class="flat">영업일평균 ${avgBizNC.toFixed(0)}건</span></div></div>
+    <div class="kp k3"><div class="kp-top"><div class="kp-lb">갱신 건수</div></div>
+      <div class="vl">${fN(totRC)}<span class="un">건</span></div></div>
+    <div class="kp"><div class="kp-top"><div class="kp-lb">데이터</div></div>
+      <div class="vl" style="color:var(--text)">${selDays.length}<span class="un">일</span></div>
+      <div class="ch"><span class="flat">영업 ${bizDays.length}일 | 결제 ${selDays.filter(r=>isPaydate(r.d)).length}일</span></div></div>
+  </div>
+  <div class="cd"><div class="cd-head"><h3>일별 가입 현황 <span class="s">🟡 결제일 🔵 영업일 ⬜ 비영업일</span></h3></div>
+    <div class="cw lg"><canvas id="c-daily-bar"></canvas></div></div>
+  <div class="cd"><div class="cd-head"><h3>일별 합산 매출</h3></div>
+    <div class="cw"><canvas id="c-daily-tp"></canvas></div></div>
+  <div class="cd"><div class="cd-head"><h3>일별 상세</h3></div>
+    <div style="overflow-x:auto;max-height:420px;overflow-y:auto">
+    <table><thead><tr><th>날짜</th><th>요일/구분</th><th class="r">신규</th><th class="r">갱신</th>
+      <th class="r">합계</th><th class="r">신규매출</th><th class="r">갱신매출</th><th class="r">합산매출</th>
+    </tr></thead><tbody>${[...selDays].reverse().map(r=>{
+      const dt=new Date(r.d);const dn=['일','월','화','수','목','금','토'][dt.getDay()];
+      const t=dayType(r.d);
+      const tLabel=t==='pay'?'결제일':t==='weekend'?'비영업':'영업일';
+      const badge=t==='pay'?'<span class="day-badge day-pay">결제일</span>':t==='weekend'?'<span class="day-badge day-wk">비영업</span>':'';
+      return`<tr style="${t==='pay'?'background:rgba(245,158,11,.04)':t==='weekend'?'background:rgba(100,116,139,.03)':''}">`+
+        `<td style="font-weight:${t==='pay'?700:400}">${r.d}${badge}</td>`+
+        `<td style="color:${[0,6].includes(dt.getDay())?'var(--text3)':'var(--text)'};font-size:11px">${dn} · ${tLabel}</td>`+
+        `<td class="r">${fN(r.nc)}</td><td class="r">${fN(r.rc)}</td>`+
+        `<td class="r" style="font-weight:600">${fN(r.nc+r.rc)}</td>`+
+        `<td class="r">${fmt(r.np)}</td><td class="r">${fmt(r.rp)}</td>`+
+        `<td class="r" style="font-weight:600;color:${t==='pay'?'var(--yellow)':'var(--text)'}">${fmt(r.np+r.rp)}</td></tr>`;
+    }).join('')}</tbody></table></div></div>`;
+
+  const dl=selDays.map(r=>r.d.substring(5));
+  const gc=selDays.map(r=>{const t=dayType(r.d);return t==='pay'?'rgba(245,158,11,.8)':t==='weekend'?'rgba(100,116,139,.5)':'rgba(129,140,248,.7)';});
+  charts['c-daily-bar']=new Chart(document.getElementById('c-daily-bar'),{type:'bar',
+    data:{labels:dl,datasets:[
+      {label:'신규',data:selDays.map(r=>r.nc),backgroundColor:gc,borderRadius:2,order:2},
+      {label:'갱신',data:selDays.map(r=>r.rc),backgroundColor:selDays.map(r=>{const t=dayType(r.d);return t==='pay'?'rgba(245,158,11,.4)':t==='weekend'?'rgba(100,116,139,.25)':'rgba(52,211,153,.45)';}),borderRadius:2,order:2},
+      {label:'합계',type:'line',data:selDays.map(r=>r.nc+r.rc),borderColor:'#e2e8f0',borderWidth:1.5,pointRadius:0,tension:.3,fill:false,order:1},
+    ]},options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#94a3b8',font:{size:10}}}},
+      scales:{x:{stacked:true,ticks:{color:'#64748b',font:{size:8},maxRotation:45},grid:{color:'rgba(99,102,241,.04)'}},
+              y:{stacked:true,ticks:{color:'#64748b',font:{size:9}},grid:{color:'rgba(99,102,241,.04)'}}}}});
+
+  charts['c-daily-tp']=new Chart(document.getElementById('c-daily-tp'),{type:'bar',
+    data:{labels:dl,datasets:[{label:'합산매출',data:selDays.map(r=>r.np+r.rp),
+      backgroundColor:selDays.map(r=>isPaydate(r.d)?'rgba(245,158,11,.7)':'rgba(129,140,248,.55)'),borderRadius:3}]},
+    options:chartOpts({yFmt:true})});
+}
+
+// ══ 채널 분석 ══
+function rChannel(el){
+  if(!hasData()){renderEmpty(el);return;}
+  const endIdx=ALL_MONTHS.indexOf(selMonth);
+  const startIdx=cRange===0?0:Math.max(0,endIdx-cRange+1);
+  const rangeM=ALL_MONTHS.slice(startIdx,endIdx+1).filter(m=>getMonthData(m));
+  if(rangeM.length===0){renderEmpty(el,'선택한 범위에 실데이터가 없습니다');return;}
+  const lmCur=getLMData(selMonth);
+  const[cy,cm]=selMonth.split('-').map(Number);
+  const prevYm=cm===1?`${cy-1}-12`:`${cy}-${String(cm-1).padStart(2,'0')}`;
+  const lmPrev=getLMData(prevYm);
+  const total=lmCur.reduce((s,r)=>s+(r.np+r.rp),0);
+  const filtered=selL==='전체'?LS:[selL];
+  el.innerHTML=`
+  <div class="fr"><span class="fr-lbl">채널:</span>
+    ${['전체',...LS].map(l=>`<button class="fb${selL===l?' ac':''}" onclick="selL='${l}';render()">${l}</button>`).join('')}
+    <div style="margin-left:auto" class="range-sel" id="rng-ch"></div>
+  </div>
+  <div class="cd"><div class="cd-head"><h3>채널별 합산매출 추이</h3></div>
+    <div class="cw lg"><canvas id="c-ch-tp"></canvas></div></div>
+  <div class="g2">
+    <div class="cd"><div class="cd-head"><h3>신규건수 추이</h3></div><div class="cw"><canvas id="c-ch-nc"></canvas></div></div>
+    <div class="cd"><div class="cd-head"><h3>갱신건수 추이</h3></div><div class="cw"><canvas id="c-ch-rc"></canvas></div></div>
+  </div>
+  ${lmCur.length>0?`<div class="cd"><div class="cd-head"><h3>${selMonth} 채널별 상세</h3></div>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>대분류</th><th>중분류</th><th class="r">합산매출</th><th class="r">비중</th><th class="r">전월</th>
+      <th class="r">신규</th><th class="r">갱신</th></tr></thead><tbody id="ch-tbody"></tbody></table></div></div>`:''}`;
+
+  buildRangeBtn('rng-ch',[3,6,12,0],cRange,v=>{cRange=v;render();});
+  charts['c-ch-tp']=new Chart(document.getElementById('c-ch-tp'),{type:'bar',
+    data:{labels:rangeM.map(mLabel),datasets:filtered.map(l=>({label:l,
+      data:rangeM.map(m=>{const r=LM.find(x=>x.m===m&&x.l===l);return r?r.np+r.rp:0;}),
+      backgroundColor:LC[LS.indexOf(l)]+'aa',borderRadius:3}))},
+    options:chartOpts({stacked:selL==='전체',yFmt:true})});
+  charts['c-ch-nc']=new Chart(document.getElementById('c-ch-nc'),{type:'line',
+    data:{labels:rangeM.map(mLabel),datasets:filtered.map(l=>({label:l,
+      data:rangeM.map(m=>{const r=LM.find(x=>x.m===m&&x.l===l);return r?r.nc:0;}),
+      borderColor:LC[LS.indexOf(l)],backgroundColor:LC[LS.indexOf(l)]+'22',fill:selL!=='전체',tension:.3,pointRadius:2}))},options:chartOpts()});
+  charts['c-ch-rc']=new Chart(document.getElementById('c-ch-rc'),{type:'line',
+    data:{labels:rangeM.map(mLabel),datasets:filtered.map(l=>({label:l,
+      data:rangeM.map(m=>{const r=LM.find(x=>x.m===m&&x.l===l);return r?r.rc:0;}),
+      borderColor:LC[LS.indexOf(l)],backgroundColor:LC[LS.indexOf(l)]+'22',fill:selL!=='전체',tension:.3,pointRadius:2}))},options:chartOpts()});
+
+  if(lmCur.length>0&&document.getElementById('ch-tbody')){
+    const mmCur=getMMData(selMonth);
+    document.getElementById('ch-tbody').innerHTML=LS.map(l=>{
+      const cur=lmCur.find(r=>r.l===l)||{nc:0,rc:0,np:0,rp:0};
+      const prv=lmPrev.find(r=>r.l===l)||null;
+      const tp2=cur.np+cur.rp;const ptp2=prv?prv.np+prv.rp:null;
+      const mids=mmCur.filter(r=>r.l===l);
+      let rows=`<tr style="background:rgba(99,102,241,.06)"><td style="font-weight:700">${l}</td><td style="color:var(--text3);font-size:10px">합계</td>`+
+        `<td class="r" style="font-weight:700;color:var(--gold)">${fmt(tp2)}</td>`+
+        `<td class="r" style="font-size:11px">${total?((tp2/total)*100).toFixed(1)+'%':'-'}</td>`+
+        `<td class="r"><span class="${ptp2&&tp2>=ptp2?'up':'dn'}" style="font-size:11px">${ptp2?pctFmt(tp2,ptp2):'-'}</span></td>`+
+        `<td class="r">${fN(cur.nc)}</td><td class="r">${fN(cur.rc)}</td></tr>`;
+      mids.forEach(mid=>{const mtp=mid.np+mid.rp;
+        rows+=`<tr><td></td><td style="color:var(--text3);font-size:11px;padding-left:18px">└ ${mid.md}</td>`+
+          `<td class="r" style="font-size:11px">${fmt(mtp)}</td>`+
+          `<td class="r" style="font-size:10px;color:var(--text3)">${tp2?((mtp/tp2)*100).toFixed(1)+'%':'-'}</td>`+
+          `<td class="r" style="font-size:10px">-</td><td class="r" style="font-size:11px">${fN(mid.nc)}</td><td class="r" style="font-size:11px">${fN(mid.rc)}</td></tr>`;
+      });
+      return rows;
+    }).join('');
+  }
+}
+
+// ══ 예측 ══
+function rForecast(el){
+  if(!hasData()){renderEmpty(el,'월별 데이터를 업로드하면 예측이 활성화됩니다');return;}
+  const fcasts=generateForecasts();
+  const lastReal=M[M.length-1];
+  const lastTP=lastReal.np+lastReal.rp;
+  const recent=M.slice(-12);
+  el.innerHTML=`
+  <div class="pred-cards">${fcasts.map((f,i)=>{
+    const tp2=f.tp||(f.np+f.rp);
+    const prevTP=i===0?lastTP:(fcasts[i-1].tp||(fcasts[i-1].np+fcasts[i-1].rp));
+    return`<div class="pc"><div class="lb">${f.m}</div><div class="val">${fmt(tp2)}</div>`+
+      `<div class="det">신규 ${fN(f.nc)}건 / 갱신 ${fN(f.rc)}건</div>`+
+      `<div class="det" style="margin-top:2px">${pctFmt(tp2,prevTP)} vs 전달</div>`+
+      `${f.breakdown?`<div class="det" style="color:var(--cyan);font-size:9px">가입 ${f.breakdown.gaipBase}억 + 분납 ${f.breakdown.payB}억</div>`:''}</div>`;
+  }).join('')}</div>
+  <div class="cd"><div class="cd-head"><h3>합산매출 + 예측 <span class="s">점선=예측</span></h3></div>
+    <div class="cw lg"><canvas id="c-f-tp"></canvas></div></div>
+  <div class="g2">
+    <div class="cd"><div class="cd-head"><h3>신규건수 + 예측</h3></div><div class="cw"><canvas id="c-f-nc"></canvas></div></div>
+    <div class="cd"><div class="cd-head"><h3>갱신건수 + 예측</h3></div><div class="cw"><canvas id="c-f-rc"></canvas></div></div>
+  </div>
+  <div class="cd"><div class="cd-head"><h3>예측 상세</h3></div>
+  <table><thead><tr><th>구분</th><th class="r">합산매출</th><th class="r">전월대비</th>
+    <th class="r">신규</th><th class="r">갱신</th><th class="r">영업일</th><th class="r">비영업일</th><th class="r">결제일</th>
+  </tr></thead><tbody>
+    <tr><td style="font-weight:600">${lastReal.m} (실적)</td>
+      <td class="r" style="color:var(--gold);font-weight:700">${fmt(lastTP)}</td><td class="r">-</td>
+      <td class="r">${fN(lastReal.nc)}</td><td class="r">${fN(lastReal.rc)}</td>
+      <td class="r" colspan="3" style="color:var(--text3);font-size:10px">실데이터</td></tr>
+    ${fcasts.map((f,i)=>{const tp2=f.tp||(f.np+f.rp);const prevTP=i===0?lastTP:(fcasts[i-1].tp||(fcasts[i-1].np+fcasts[i-1].rp));
+      return`<tr class="pred-tr"><td>${f.m}</td><td class="r" style="font-weight:700">${fmt(tp2)}</td>`+
+        `<td class="r"><span class="${tp2>=prevTP?'up':'dn'}">${pctFmt(tp2,prevTP)}</span></td>`+
+        `<td class="r">${fN(f.nc)}</td><td class="r">${fN(f.rc)}</td>`+
+        `<td class="r" style="font-size:11px">${f.comp?.biz||'- '}일</td>`+
+        `<td class="r" style="font-size:11px">${f.comp?.wk||'- '}일</td>`+
+        `<td class="r" style="font-size:11px">${f.comp?.pay||'- '}일</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+
+  const allM=[...recent,...fcasts];const labels=allM.map(d=>mLabel(d.m));
+  const mkChart=(id,key,baseColor,fcColor)=>new Chart(document.getElementById(id),{type:'line',
+    data:{labels,datasets:[{label:key==='tp'?'합산매출':key,
+      data:allM.map(d=>key==='tp'?(d.tp||(d.np+d.rp)):d[key]),
+      segment:{borderDash:ctx=>ctx.p0DataIndex>=recent.length?[6,3]:undefined},
+      borderColor:allM.map(d=>d.fc?fcColor:baseColor),
+      pointBackgroundColor:allM.map(d=>d.fc?fcColor:baseColor),
+      pointRadius:allM.map(d=>d.fc?5:3),tension:.3,borderWidth:2.5,fill:false}]},
+    options:chartOpts({yFmt:key==='tp'})});
+  charts['c-f-tp']=mkChart('c-f-tp','tp','#818cf8','#f59e0b');
+  charts['c-f-nc']=mkChart('c-f-nc','nc','#818cf8','#f59e0b');
+  charts['c-f-rc']=mkChart('c-f-rc','rc','#34d399','#f59e0b');
+}
+
+// ══ 이상 감지 ══
+function detectAlerts(){
+  const alerts=[];
+  if(!D||D.length===0) return alerts;
+
+  const dates=[...new Set(D.map(d=>d.d))].sort();
+  if(dates.length<2) return alerts;
+
+  // ── 오늘 기준 최신 실적일
+  const latestDate=dates[dates.length-1];
+  const latestD=D.find(r=>r.d===latestDate)||{nc:0,rc:0,np:0,rp:0};
+  const latestTC=latestD.nc+latestD.rc;
+  const latestTP=latestD.np+latestD.rp;
+
+  // ── 전일
+  const prevDate=dates[dates.length-2];
+  const prevD=D.find(r=>r.d===prevDate)||{nc:0,rc:0,np:0,rp:0};
+  const prevTC=prevD.nc+prevD.rc;
+
+  // ── 전주 동요일 (7일전)
+  const d7Date=dates[dates.length-8]||null;
+  const d7=d7Date?D.find(r=>r.d===d7Date):null;
+  const d7TC=d7?d7.nc+d7.rc:0;
+
+  // ── 최근 7일 평균
+  const last7=dates.slice(-7);
+  const avg7=(arr,key)=>arr.reduce((s,d)=>{const r=D.find(x=>x.d===d);return s+(r?r[key]:0);},0)/arr.length;
+  const avg7tc=last7.map(d=>D.find(r=>r.d===d)).filter(Boolean).reduce((s,r)=>s+r.nc+r.rc,0)/last7.length;
+
+  // ── 직전 7일 평균 (8~14일전)
+  const prev7=dates.slice(-14,-7);
+  const prev7tc=prev7.length?prev7.map(d=>D.find(r=>r.d===d)).filter(Boolean).reduce((s,r)=>s+r.nc+r.rc,0)/prev7.length:0;
+
+  // ── 채널별 전일/전주 비교
+  const latestDL=DL.filter(r=>r.d===latestDate);
+  const prevDL=DL.filter(r=>r.d===prevDate);
+  const d7DL=d7Date?DL.filter(r=>r.d===d7Date):[];
+
+  const LS_ALL=['오가닉','퍼포먼스','제휴','비교추천 플랫폼','채널 시너지'];
+
+  LS_ALL.forEach(ch=>{
+    const cur=latestDL.find(r=>r.l===ch)||{nc:0,rc:0};
+    const prv=prevDL.find(r=>r.l===ch)||{nc:0,rc:0};
+    const wk=d7DL.find(r=>r.l===ch)||{nc:0,rc:0};
+    const curTC=cur.nc+cur.rc;
+    const prvTC=prv.nc+prv.rc;
+    const wkTC=wk.nc+wk.rc;
+
+    // 전일 대비 ±30% 이상
+    if(prvTC>0){
+      const rate=((curTC-prvTC)/prvTC)*100;
+      if(Math.abs(rate)>=30){
+        alerts.push({
+          type:'전일대비', ch, dir:rate>0?'inc':'dec',
+          rate:rate.toFixed(1),
+          curV:curTC.toFixed(0), prvV:prvTC.toFixed(0),
+          curDate:latestDate, prvDate:prevDate,
+          act:rate>0?`${ch} 전일 대비 급증. 이상 트래픽 또는 이벤트 효과 확인 필요.`
+                   :`${ch} 전일 대비 급감. 광고 소진·플랫폼 오류 즉시 점검.`
+        });
+      }
+    }
+
+    // 전주 동요일 대비 ±25% 이상
+    if(wkTC>0){
+      const rate=((curTC-wkTC)/wkTC)*100;
+      if(Math.abs(rate)>=25){
+        alerts.push({
+          type:'전주대비', ch, dir:rate>0?'inc':'dec',
+          rate:rate.toFixed(1),
+          curV:curTC.toFixed(0), prvV:wkTC.toFixed(0),
+          curDate:latestDate, prvDate:d7Date,
+          act:rate>0?`${ch} 전주 동요일 대비 상승. 성과 지속 여부 모니터링.`
+                   :`${ch} 전주 동요일 대비 하락. 요일 패턴 이탈 — 원인 분석.`
+        });
+      }
+    }
+  });
+
+  // ── 전체 합계 전일 대비
+  if(prevTC>0){
+    const rate=((latestTC-prevTC)/prevTC)*100;
+    if(Math.abs(rate)>=20){
+      alerts.push({
+        type:'전일대비', ch:'전체합계', dir:rate>0?'inc':'dec',
+        rate:rate.toFixed(1),
+        curV:latestTC.toFixed(0), prvV:prevTC.toFixed(0),
+        curDate:latestDate, prvDate:prevDate,
+        act:rate>0?'전체 가입건수 전일 대비 급증. 전 채널 모니터링.'
+                 :'전체 가입건수 전일 대비 급감. 시스템 오류 또는 광고 일제 중단 여부 확인.'
+      });
+    }
+  }
+
+  // 최신 날짜 순 + 변화율 절대값 내림차순
+  return alerts.sort((a,b)=>Math.abs(parseFloat(b.rate))-Math.abs(parseFloat(a.rate)));
+}
+
+function rAlerts(el){
+  const alerts=detectAlerts();
+  const hasD=D&&D.length>0;
+  const latestDate=hasD?[...new Set(D.map(d=>d.d))].sort().slice(-1)[0]:null;
+
+  el.innerHTML=`
+  <div class="ib">
+    <div class="tt">🔍 이상 감지 기준</div>
+    <div class="ds">
+      전일 대비 ±30% 이상 | 전주 동요일 대비 ±25% 이상<br>
+      기준일: ${latestDate||'데이터 없음'} (업로드된 일별 데이터 최신일 기준)
+    </div>
+  </div>
+  ${!hasD?'<div class="cd" style="text-align:center;padding:40px;color:var(--text3)">📂 일별 데이터를 업로드하면 이상 감지가 활성화됩니다.</div>':''}
+  ${hasD&&!alerts.length?'<div class="cd" style="text-align:center;padding:40px;color:var(--text3)">✅ 현재 감지된 이상 항목이 없습니다.</div>':''}
+  ${alerts.map(a=>`
+    <div class="ac2 ${a.dir}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700;font-size:13px">${a.dir==='inc'?'📈':'📉'} ${a.ch}</div>
+          <div style="font-size:11px;color:var(--text3)">${a.type} | ${a.prvDate} → ${a.curDate}</div>
+        </div>
+        <div class="bd ${a.dir}">${a.dir==='inc'?'▲':'▼'} ${Math.abs(a.rate)}%</div>
+      </div>
+      <div class="metric-row">
+        <span>${a.prvDate}: <strong>${Number(a.prvV).toLocaleString()}건</strong></span>
+        <span>${a.curDate}: <strong>${Number(a.curV).toLocaleString()}건</strong></span>
+      </div>
+      <div class="act">💡 <strong>제안:</strong> ${a.act}</div>
+    </div>
+  `).join('')}`;
+}
+
+// ══ RENDER ══
+function render(){
+  dc();
+  const el=document.getElementById('ct');
+  if(cTab==='monthly')rMonthly(el);
+  else if(cTab==='daily')rDaily(el);
+  else if(cTab==='channel')rChannel(el);
+  else if(cTab==='forecast')rForecast(el);
+  else if(cTab==='alerts')rAlerts(el);
+}
+updateNav();
+render();
+</script>
+</body>
+</html>
