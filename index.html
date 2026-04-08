@@ -169,6 +169,43 @@ const ANOMALY_PERIODS={
 };
 function isAnomalyMonth(m){return Object.values(ANOMALY_PERIODS).some(p=>p.months.includes(m));}
 
+// ══════════════════════════════════════════════
+//  갱신도래자 데이터 (이미지 기반 하드코딩 - 예측 로직용)
+//  출처: 내부 갱신도래자 예측 데이터 (2026-01~2027-02)
+// ══════════════════════════════════════════════
+
+// 과거 실적 기반 갱신율 (정상구간 2025-01~09 평균)
+const RENEWAL_RATE = {
+  monthly: 0.84,   // 월납 갱신율 84% (정상 85% 대비 -1%p, 보수적 회복 가정)
+  annual:  0.75,   // 연납 갱신율 75% (정상 77% 대비 -2%p, 보수적 회복 가정)
+};
+
+// 갱신도래자 예측 데이터: {월: {m:월납도래자, a:연납도래자}}
+const RENEWAL_ARRIVALS = {
+  '2026-01': {m:41731, a:8359},
+  '2026-02': {m:39146, a:7833},
+  '2026-03': {m:44370, a:8326},
+  '2026-04': {m:44276, a:8149},
+  '2026-05': {m:45720, a:8653},
+  '2026-06': {m:44834, a:10878},
+  '2026-07': {m:45697, a:10958},
+  '2026-08': {m:43400, a:10176},
+  '2026-09': {m:43497, a:9878},
+  '2026-10': {m:42949, a:9951},
+  '2026-11': {m:43705, a:10762},
+  '2026-12': {m:45492, a:11735},
+  '2027-01': {m:43717, a:12593},
+  '2027-02': {m:42107, a:14429},
+};
+
+// 갱신도래자 기반 갱신건수 예측
+function predictRenewalCount(ym) {
+  const arr = RENEWAL_ARRIVALS[ym];
+  if (!arr) return null;
+  return Math.round(arr.m * RENEWAL_RATE.monthly + arr.a * RENEWAL_RATE.annual);
+}
+
+
 // ── 날짜 유틸
 const TODAY_YM=(()=>{const t=new Date();return t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0');})();
 const YESTERDAY=(()=>{const t=new Date();t.setDate(t.getDate()-1);return t.toISOString().substring(0,10);})();
@@ -457,7 +494,10 @@ function computePrediction(targetYm){
 
   // ── 2. 건수 예측
   const predNC = Math.round(baseM.nc * sNC);
-  const predRC = Math.round(baseM.rc * sRC);
+  // 갱신건수: 갱신도래자 데이터 있으면 도래자×갱신율, 없으면 기존 계절성
+  const renewalPred = predictRenewalCount(targetYm);
+  const predRC = renewalPred !== null ? renewalPred : Math.round(baseM.rc * sRC);
+  const usedRenewalData = renewalPred !== null;
 
   // ── 3. 비결제일 건당 단가 (2~3월 통합 평균)
   const baseMonths=['2026-02','2026-03'];
@@ -506,6 +546,8 @@ function computePrediction(targetYm){
     m: targetYm, fc: true,
     nc: predNC,
     rc: predRC,
+    usedRenewalData,
+    renewalArrival: RENEWAL_ARRIVALS[targetYm] || null,
     np: Math.round(aNP + payB * 0.45), // np 비율 (결제일 신규:갱신 ≈ 45:55 기준)
     rp: Math.round(aRP + payB * 0.55),
     tp: Math.round(aNP + aRP + payB),
@@ -778,18 +820,20 @@ function rForecast(el){
   </div>
   <div class="cd"><div class="cd-head"><h3>예측 상세</h3></div>
   <table><thead><tr><th>구분</th><th class="r">합산매출</th><th class="r">전월대비</th>
-    <th class="r">신규</th><th class="r">갱신</th><th class="r">영업일</th><th class="r">비영업일</th><th class="r">결제일</th>
+    <th class="r">신규</th><th class="r">갱신</th><th class="r">갱신도래자</th><th class="r">갱신율</th><th class="r">영업일</th><th class="r">결제일</th>
   </tr></thead><tbody>
     <tr><td style="font-weight:600">${lastReal.m} (실적)</td>
       <td class="r" style="color:var(--gold);font-weight:700">${fmt(lastTP)}</td><td class="r">-</td>
       <td class="r">${fN(lastReal.nc)}</td><td class="r">${fN(lastReal.rc)}</td>
       <td class="r" colspan="3" style="color:var(--text3);font-size:10px">실데이터</td></tr>
     ${fcasts.map((f,i)=>{const tp2=f.tp||(f.np+f.rp);const prevTP=i===0?lastTP:(fcasts[i-1].tp||(fcasts[i-1].np+fcasts[i-1].rp));
-      return`<tr class="pred-tr"><td>${f.m}</td><td class="r" style="font-weight:700">${fmt(tp2)}</td>`+
+      return`<tr class="pred-tr"><td>${f.m}${f.usedRenewalData?' <span style="font-size:9px;color:var(--cyan)">도래자</span>':''}</td>`+
+        `<td class="r" style="font-weight:700">${fmt(tp2)}</td>`+
         `<td class="r"><span class="${tp2>=prevTP?'up':'dn'}">${pctFmt(tp2,prevTP)}</span></td>`+
         `<td class="r">${fN(f.nc)}</td><td class="r">${fN(f.rc)}</td>`+
+        `<td class="r" style="font-size:11px">${f.renewalArrival?fN((f.renewalArrival.m||0)+(f.renewalArrival.a||0)):'-'}</td>`+
+        `<td class="r" style="font-size:11px">${f.renewalArrival&&((f.renewalArrival.m||0)+(f.renewalArrival.a||0))>0?((f.rc/((f.renewalArrival.m||0)+(f.renewalArrival.a||0)))*100).toFixed(1)+'%':'-'}</td>`+
         `<td class="r" style="font-size:11px">${f.comp?.biz||'- '}일</td>`+
-        `<td class="r" style="font-size:11px">${f.comp?.wk||'- '}일</td>`+
         `<td class="r" style="font-size:11px">${f.comp?.pay||'- '}일</td></tr>`;
     }).join('')}</tbody></table></div>`;
 
