@@ -779,21 +779,27 @@ function calcDailyAvgByType(days){
 // --- 채널별 건당단가 (최근 30일, 비결제일) ---
 function calcUnitPriceByChannel(){
   const recent = getRecentDaysByChannel(30);
-  const result = {};
+  // 먼저 전체 합계 건당단가 산출 (폴백용)
+  const allDays = getRecentDays(30).filter(r => dayType(r.d) !== 'pay');
+  const totNC = allDays.reduce((s,r) => s+r.nc, 0);
+  const totRC = allDays.reduce((s,r) => s+r.rc, 0);
+  const totNP = allDays.reduce((s,r) => s+r.np, 0);
+  const totRP = allDays.reduce((s,r) => s+r.rp, 0);
+  const totalUnit = { npPer: totNC>0?totNP/totNC:400000, rpPer: totRC>0?totRP/totRC:220000 };
+  
+  const result = { '__total': totalUnit };
   for(const l of LS){
     const chDays = recent.filter(r => r.l === l && dayType(r.d) !== 'pay');
     const tNC = chDays.reduce((s,r) => s + r.nc, 0);
     const tRC = chDays.reduce((s,r) => s + r.rc, 0);
     const tNP = chDays.reduce((s,r) => s + r.np, 0);
     const tRP = chDays.reduce((s,r) => s + r.rp, 0);
-    result[l] = { npPer: tNC>0 ? tNP/tNC : 0, rpPer: tRC>0 ? tRP/tRC : 0 };
+    // 건수가 너무 적으면 전체 평균으로 폴백 (왜곡 방지)
+    result[l] = {
+      npPer: tNC >= 10 ? tNP/tNC : totalUnit.npPer,
+      rpPer: tRC >= 10 ? tRP/tRC : totalUnit.rpPer,
+    };
   }
-  const allDays = getRecentDays(30).filter(r => dayType(r.d) !== 'pay');
-  const totNC = allDays.reduce((s,r) => s+r.nc, 0);
-  const totRC = allDays.reduce((s,r) => s+r.rc, 0);
-  const totNP = allDays.reduce((s,r) => s+r.np, 0);
-  const totRP = allDays.reduce((s,r) => s+r.rp, 0);
-  result['__total'] = { npPer: totNC>0?totNP/totNC:400000, rpPer: totRC>0?totRP/totRC:220000 };
   return result;
 }
 function calcUnitPrice(){ return calcUnitPriceByChannel()['__total']; }
@@ -829,6 +835,11 @@ function countsToRevenue(nc, rc){
     np += nc * shares[l].nc * up.npPer;
     rp += rc * shares[l].rc * up.rpPer;
   }
+  // 안전장치: 채널별 합산 결과가 전체 단가 기준과 ±30% 이상 차이나면 전체 단가 사용
+  const totalNP = nc * unitPrices['__total'].npPer;
+  const totalRP = rc * unitPrices['__total'].rpPer;
+  if(totalNP > 0 && (np/totalNP < 0.7 || np/totalNP > 1.3)) np = totalNP;
+  if(totalRP > 0 && (rp/totalRP < 0.7 || rp/totalRP > 1.3)) rp = totalRP;
   return { np: safe(np), rp: safe(rp) };
 }
 
@@ -992,13 +1003,13 @@ function computeFutureMonthPrediction(targetYm){
     let predNC = safe(Math.round(baseNC * tNC));
     let predRC = safe(Math.round(baseRC * tRC));
 
-    // 갱신 도래자
+    // 갱신 도래자 — 도래자 데이터가 있으면 주력(80%)으로 사용
     let usedRenewal=false, renewalArrival=null, dynRates=null;
     if(RENEWAL_ARRIVALS[targetYm]){
       const ra=RENEWAL_ARRIVALS[targetYm]; renewalArrival=ra;
       dynRates=getDynamicRenewalRates(targetYm);
       const arrRC=Math.round(ra.m*dynRates.monthly+ra.a*dynRates.annual);
-      predRC=Math.round(predRC*0.5+arrRC*0.5);
+      predRC=Math.round(predRC*0.2+arrRC*0.8);
       usedRenewal=true;
     }
 
