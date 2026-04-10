@@ -351,6 +351,7 @@ tbody tr.pred-row td:first-child::after {
 }
 .fc-method.renewal { background: rgba(52,211,153,.12); color: var(--green); }
 .fc-method.seasonal { background: rgba(129,140,248,.12); color: var(--accent); }
+.fc-method.intra { background: rgba(251,191,36,.12); color: var(--yellow); }
 
 /* Confidence indicator */
 .confidence-bar {
@@ -750,50 +751,54 @@ function calcTrend(values){
   return {slope,intercept,r2};
 }
 
-// Get weighted seasonality factor
-function getSeasonality(targetMonth, field, baseValue){
-  if(!M.length||!baseValue) return 1.0;
-  const tMon=parseInt(targetMonth.split('-')[1],10);
+// 합병 기준일: 이 이후 데이터만 계절성 계산에 사용
+const POST_MERGER_START = '2025-10';
+
+// 최근 3개월 가중이동평균 기반 예측 (합병 이후 구조 반영)
+// 계절성은 합병 이후 동월 데이터가 있을 때만 보정 수준(20%)으로 블렌딩
+function getSeasonalAdjustedForecast(targetMonth, field){
+  if(!M.length) return null;
   
-  // Collect same-month data across years, exclude anomaly months
-  const sameMonthData=[];
-  const allValidData=[];
+  const tMon = parseInt(targetMonth.split('-')[1], 10);
   
-  for(const r of M){
-    if(isAnomalyMonth(r.m)) continue;
-    allValidData.push(r);
-    if(parseInt(r.m.split('-')[1],10)===tMon){
-      sameMonthData.push(r);
-    }
+  // ① 합병 이후 + 비이상치 데이터만 추출
+  const postMergerValid = M.filter(r => r.m >= POST_MERGER_START && !isAnomalyMonth(r.m));
+  
+  // 사용할 데이터풀: 합병 이후 유효 데이터가 3개월 이상이면 그것만 사용,
+  // 아니면 전체 비이상치 데이터의 최근 3개월 사용
+  let recentData;
+  if(postMergerValid.length >= 3){
+    recentData = postMergerValid.slice(-3);
+  } else {
+    const allValid = M.filter(r => !isAnomalyMonth(r.m));
+    recentData = allValid.slice(-3);
   }
   
-  if(!sameMonthData.length) return 1.0;
-  if(!allValidData.length) return 1.0;
+  if(!recentData.length) return null;
   
-  // Calculate ratio of same-month values to overall average
-  const overallAvg = allValidData.reduce((s,r)=>s+r[field],0)/allValidData.length;
-  if(!overallAvg) return 1.0;
+  // ② 가중이동평균 (가중치 1:2:3 — 최근월이 가장 높음)
+  const weights = [];
+  for(let i = 0; i < recentData.length; i++){
+    weights.push(i + 1); // 1, 2, 3
+  }
+  const weightedSum = recentData.reduce((s, r, i) => s + r[field] * weights[i], 0);
+  const weightTotal = weights.reduce((s, w) => s + w, 0);
+  const wma = weightedSum / weightTotal;
   
-  // Weight more recent years more heavily
-  const ratios=[];
-  const weights=[];
-  for(let i=0;i<sameMonthData.length;i++){
-    const ratio = sameMonthData[i][field] / overallAvg;
-    ratios.push(ratio);
-    // More recent = higher weight (exponential weighting)
-    weights.push(Math.pow(1.5, i));
+  // ③ 계절성 보정: 합병 이후 동월 데이터가 있을 때만 적용
+  const postMergerSameMonth = postMergerValid.filter(r => 
+    parseInt(r.m.split('-')[1], 10) === tMon
+  );
+  
+  if(postMergerSameMonth.length > 0){
+    // 합병 이후 동월 실적이 있으면, 해당 값과 WMA를 블렌딩 (동월 20%, WMA 80%)
+    const sameMonthAvg = postMergerSameMonth.reduce((s, r) => s + r[field], 0) / postMergerSameMonth.length;
+    const SEASON_BLEND = 0.20;
+    return wma * (1 - SEASON_BLEND) + sameMonthAvg * SEASON_BLEND;
   }
   
-  const weightedSum = ratios.reduce((s,r,i)=>s+r*weights[i],0);
-  const weightTotal = weights.reduce((s,w)=>s+w,0);
-  const seasonFactor = weightedSum/weightTotal;
-  
-  // Normalize: baseValue * seasonFactor should give reasonable result
-  // Convert from overall-avg-based to base-based
-  const baseRatio = baseValue / overallAvg;
-  if(!baseRatio) return seasonFactor;
-  
-  return seasonFactor / baseRatio;
+  // 동월 데이터 없으면 WMA 그대로 사용 (계절성 미적용 = 1.0)
+  return wma;
 }
 
 // Calculate dynamic renewal rates with trend
@@ -956,31 +961,167 @@ function calcConfidence(targetYm, usedRenewal){
   return Math.max(10, Math.min(95, Math.round(score)));
 }
 
-// ===== MAIN PREDICTION FUNCTION =====
-function computePrediction(targetYm){
+// ===== INTRA-MONTH PREDICTION (당월 진행 중 예측) =====
+// 핵심: 확정 실적 + 잔여일 예측 = 월말 예측
+// 데이터가 쌓일수록 잔여일 비중이 줄어 자연스럽게 정확도 상승
+
+function computeInMonthPrediction(targetYm){
+  // 해당 월의 일별 데이터 존재 확인
+  const monthDays = D.filter(r => r.d.slice(0,7) === targetYm).sort((a,b) => a.d.localeCompare(b.d));
+  if(!monthDays.length) return null; // 일별 데이터 없으면 이 방식 사용 불가
+  
+  const lastDay = getLastDay(targetYm);
+  const confirmedDays = monthDays.length;
+  const lastDataDate = monthDays[monthDays.length-1].d;
+  const lastDataDay = parseInt(lastDataDate.split('-')[2], 10);
+  
+  // 이미 월말까지 데이터가 있으면 예측이 아닌 확정
+  if(lastDataDay >= lastDay){
+    return null; // M 배열의 확정 데이터 사용
+  }
+  
+  // ── 확정 실적 합산 ──
+  const confirmed = {
+    nc: monthDays.reduce((s,r) => s + r.nc, 0),
+    rc: monthDays.reduce((s,r) => s + r.rc, 0),
+    np: monthDays.reduce((s,r) => s + r.np, 0),
+    rp: monthDays.reduce((s,r) => s + r.rp, 0),
+  };
+  
+  // ── 확정 데이터에서 유형별 일평균 산출 ──
+  const confirmed_biz = monthDays.filter(r => dayType(r.d) === 'biz');
+  const confirmed_wk  = monthDays.filter(r => dayType(r.d) === 'weekend');
+  const confirmed_pay = monthDays.filter(r => dayType(r.d) === 'pay');
+  
+  const avg = (arr, field) => arr.length ? arr.reduce((s,r) => s + r[field], 0) / arr.length : 0;
+  
+  // 당월 유형별 일평균 (당월 데이터가 가장 정확한 기준)
+  let avgBiz  = { nc: avg(confirmed_biz,'nc'), rc: avg(confirmed_biz,'rc'), np: avg(confirmed_biz,'np'), rp: avg(confirmed_biz,'rp') };
+  let avgWk   = { nc: avg(confirmed_wk,'nc'),  rc: avg(confirmed_wk,'rc'),  np: avg(confirmed_wk,'np'),  rp: avg(confirmed_wk,'rp') };
+  let avgPay  = { nc: avg(confirmed_pay,'nc'), rc: avg(confirmed_pay,'rc'), np: avg(confirmed_pay,'np'), rp: avg(confirmed_pay,'rp') };
+  
+  // 당월에 해당 유형 데이터가 없으면 직전월 또는 과거 데이터에서 보완
+  const fallbackAvg = (type) => {
+    // 합병 이후 비이상치 최근 3개월에서 해당 유형 일평균
+    const recentMonths = [...new Set(D.map(r=>r.d.slice(0,7)))]
+      .filter(m => m < targetYm && m >= POST_MERGER_START && !isAnomalyMonth(m))
+      .sort().slice(-3);
+    if(!recentMonths.length) return null;
+    const days = D.filter(r => recentMonths.includes(r.d.slice(0,7)) && dayType(r.d) === type);
+    if(!days.length) return null;
+    return { nc: avg(days,'nc'), rc: avg(days,'rc'), np: avg(days,'np'), rp: avg(days,'rp') };
+  };
+  
+  if(!confirmed_biz.length) { const fb = fallbackAvg('biz'); if(fb) avgBiz = fb; }
+  if(!confirmed_wk.length)  { const fb = fallbackAvg('weekend'); if(fb) avgWk = fb; }
+  if(!confirmed_pay.length) { const fb = fallbackAvg('pay'); if(fb) avgPay = fb; }
+  
+  // ── 잔여일 유형별 카운트 ──
+  let remainBiz = 0, remainWk = 0, remainPay = 0;
+  const [y, m] = targetYm.split('-').map(Number);
+  for(let day = lastDataDay + 1; day <= lastDay; day++){
+    const ds = `${targetYm}-${String(day).padStart(2,'0')}`;
+    const dt = dayType(ds);
+    if(dt === 'pay') remainPay++;
+    else if(dt === 'weekend') remainWk++;
+    else remainBiz++;
+  }
+  
+  // ── 잔여 예측 ──
+  const remaining = {
+    nc: avgBiz.nc * remainBiz + avgWk.nc * remainWk + avgPay.nc * remainPay,
+    rc: avgBiz.rc * remainBiz + avgWk.rc * remainWk + avgPay.rc * remainPay,
+    np: avgBiz.np * remainBiz + avgWk.np * remainWk + avgPay.np * remainPay,
+    rp: avgBiz.rp * remainBiz + avgWk.rp * remainWk + avgPay.rp * remainPay,
+  };
+  
+  // ── 갱신건수 보정: 갱신도래자 데이터가 있으면 크로스체크 ──
+  let usedRenewal = false, renewalArrival = null, dynRates = null;
+  const totalRC_raw = confirmed.rc + remaining.rc;
+  
+  if(RENEWAL_ARRIVALS[targetYm]){
+    const ra = RENEWAL_ARRIVALS[targetYm];
+    renewalArrival = ra;
+    dynRates = getDynamicRenewalRates(targetYm);
+    const arrivalRC = Math.round(ra.m * dynRates.monthly + ra.a * dynRates.annual);
+    usedRenewal = true;
+    
+    // 진행률에 따라 블렌딩: 데이터가 많을수록 실제 추세 신뢰
+    const progress = confirmedDays / lastDay; // 0~1
+    // 진행률 높으면 일평균 기반 우세, 낮으면 도래자 기반 보조
+    const blendedRC = totalRC_raw * progress + arrivalRC * (1 - progress);
+    remaining.rc = Math.max(0, blendedRC - confirmed.rc);
+  }
+  
+  // ── 최종 합산 ──
+  const predNC = safe(Math.round(confirmed.nc + remaining.nc));
+  const predRC = safe(Math.round(confirmed.rc + remaining.rc));
+  const predNP = safe(confirmed.np + remaining.np);
+  const predRP = safe(confirmed.rp + remaining.rp);
+  const tp = predNP + predRP;
+  
+  // ── 신뢰도: 진행률이 직접적으로 반영 ──
+  const progress = confirmedDays / lastDay;
+  let confidence = Math.round(30 + progress * 65); // 30%~95%
+  if(usedRenewal) confidence = Math.min(95, confidence + 5);
+  confidence = Math.max(10, Math.min(95, confidence));
+  
+  const baseM = M.length ? M[M.length-1] : null;
+  
+  return {
+    m: targetYm,
+    nc: predNC,
+    rc: predRC,
+    np: predNP,
+    rp: predRP,
+    tp: tp,
+    is_pred: true,
+    pred_type: 'intra-month',
+    used_renewal: usedRenewal,
+    renewal_arrival: renewalArrival,
+    renewal_rates: dynRates,
+    base_month: baseM ? baseM.m : targetYm,
+    season: {nc: 1.0, rc: 1.0},
+    comp: getMonthComposition(targetYm),
+    confidence: confidence,
+    progress: progress,
+    confirmed_days: confirmedDays,
+    total_days: lastDay,
+    confirmed: confirmed,
+    remaining_days: { biz: remainBiz, wk: remainWk, pay: remainPay },
+    breakdown: {
+      npPer: predNC ? predNP/predNC : 0,
+      rpPer: predRC ? predRP/predRC : 0,
+      payB: 0,
+      gaip: predNP + predRP,
+      trend_r2: 0
+    }
+  };
+}
+
+// ===== FUTURE MONTH PREDICTION (미래월 예측) =====
+function computeFutureMonthPrediction(targetYm){
   if(!M.length) return null;
   
   const baseM = M[M.length-1];
-  const baseMprev = M.length>=2 ? M[M.length-2] : null;
   
-  // === Seasonality (weighted by recency) ===
-  const sNC = getSeasonality(targetYm, 'nc', baseM.nc);
-  const sRC = getSeasonality(targetYm, 'rc', baseM.rc);
+  // === 신규건수: 최근 3개월 가중이동평균 + 합병 이후 동월 보정 ===
+  const ncForecast = getSeasonalAdjustedForecast(targetYm, 'nc');
+  let predNC = ncForecast !== null ? ncForecast : baseM.nc;
   
-  // === Trend (linear regression on non-anomaly data) ===
-  const validM = M.filter(r=>!isAnomalyMonth(r.m));
-  const ncValues = validM.map(r=>r.nc);
-  const ncTrend = calcTrend(ncValues);
-  
-  // === New policy count: seasonality × trend ===
-  let predNC = baseM.nc * sNC;
-  
-  // Apply mild trend adjustment (don't let it dominate)
-  if(ncTrend.r2 > 0.3 && validM.length >= 6){
-    const trendAdj = 1 + (ncTrend.slope / (ncValues[ncValues.length-1]||1)) * 0.5;
-    predNC *= Math.max(0.85, Math.min(1.15, trendAdj));
+  // 트렌드 보정: 합병 이후 비이상치 데이터에서만 추세 계산
+  const postMergerValid = M.filter(r => r.m >= POST_MERGER_START && !isAnomalyMonth(r.m));
+  if(postMergerValid.length >= 3){
+    const ncValues = postMergerValid.map(r => r.nc);
+    const ncTrend = calcTrend(ncValues);
+    if(ncTrend.r2 > 0.4){
+      const trendAdj = 1 + (ncTrend.slope / (ncValues[ncValues.length-1] || 1)) * 0.3;
+      predNC *= Math.max(0.90, Math.min(1.10, trendAdj));
+    }
   }
   predNC = safe(Math.round(predNC));
+  
+  const sNC = baseM.nc ? predNC / baseM.nc : 1.0;
   
   // === Renewal count ===
   let predRC, usedRenewal=false, renewalArrival=null;
@@ -992,8 +1133,11 @@ function computePrediction(targetYm){
     predRC = Math.round(ra.m * dynRates.monthly + ra.a * dynRates.annual);
     usedRenewal = true;
   } else {
-    predRC = safe(Math.round(baseM.rc * sRC));
+    const rcForecast = getSeasonalAdjustedForecast(targetYm, 'rc');
+    predRC = safe(Math.round(rcForecast !== null ? rcForecast : baseM.rc));
   }
+  
+  const sRC = baseM.rc ? predRC / baseM.rc : 1.0;
   
   // === Unit prices ===
   const {npPer, rpPer} = calcUnitPrice();
@@ -1021,6 +1165,7 @@ function computePrediction(targetYm){
     rp: safe(totalRP),
     tp: safe(tp),
     is_pred: true,
+    pred_type: 'future',
     used_renewal: usedRenewal,
     renewal_arrival: renewalArrival,
     renewal_rates: dynRates,
@@ -1028,39 +1173,119 @@ function computePrediction(targetYm){
     season: {nc:sNC, rc:sRC},
     comp: getMonthComposition(targetYm),
     confidence: confidence,
-    breakdown: {npPer, rpPer, payB, gaip:aNP+aRP, trend_r2: ncTrend.r2}
+    progress: 0,
+    confirmed_days: 0,
+    total_days: getLastDay(targetYm),
+    breakdown: {npPer, rpPer, payB, gaip:aNP+aRP, trend_r2: 0}
   };
 }
 
-function generateForecasts(){
-  if(!M.length) return [];
-  const lastM = M[M.length-1].m;
-  const [ly,lm]=lastM.split('-').map(Number);
-  const [ty,tm]=TODAY_YM.split('-').map(Number);
+// ===== UNIFIED PREDICTION ROUTER =====
+function computePrediction(targetYm){
+  if(!M.length && !D.length) return null;
   
-  let startY, startM;
-  if(ly*12+lm < ty*12+tm){
-    startY=ly; startM=lm+1;
-    if(startM>12){ startY++; startM=1; }
-  } else {
-    startY=ty; startM=tm;
+  // 해당 월에 일별 데이터가 있지만 월이 아직 완료되지 않았으면 → 당월 진행 중 예측
+  const monthDays = D.filter(r => r.d.slice(0,7) === targetYm);
+  if(monthDays.length > 0){
+    const lastDay = getLastDay(targetYm);
+    const lastDataDay = Math.max(...monthDays.map(r => parseInt(r.d.split('-')[2], 10)));
+    if(lastDataDay < lastDay){
+      // 당월 데이터가 있지만 월말 미도달 → intra-month
+      return computeInMonthPrediction(targetYm);
+    }
+    // 월말까지 데이터 있으면 M 배열에 확정치가 있을 것 → null 반환 (확정치 사용)
+    return null;
   }
   
-  const results=[];
-  for(let i=0;i<3;i++){
-    let ny=startY, nm=startM+i;
-    if(nm>12){ ny++; nm-=12; }
-    const ym=`${ny}-${String(nm).padStart(2,'0')}`;
-    const pred=computePrediction(ym);
+  // 일별 데이터 없는 미래월 → future prediction
+  return computeFutureMonthPrediction(targetYm);
+}
+
+function generateForecasts(){
+  if(!M.length && !D.length) return [];
+  
+  // 가장 최신 데이터 월 판단
+  const allDataMonths = new Set([
+    ...M.map(r => r.m),
+    ...D.map(r => r.d.slice(0,7))
+  ]);
+  const sortedMonths = [...allDataMonths].sort();
+  const latestDataMonth = sortedMonths[sortedMonths.length - 1] || TODAY_YM;
+  
+  const [ly, lm] = latestDataMonth.split('-').map(Number);
+  const [ty, tm] = TODAY_YM.split('-').map(Number);
+  
+  // 예측 대상 월 결정: 당월(진행 중이면) + 미래 2~3개월
+  const targetMonths = [];
+  
+  // 당월이 데이터에 포함되어 있고 아직 진행 중이면 당월도 예측 대상
+  const currentMonthDays = D.filter(r => r.d.slice(0,7) === TODAY_YM);
+  const currentMonthComplete = currentMonthDays.length > 0 && 
+    Math.max(...currentMonthDays.map(r => parseInt(r.d.split('-')[2], 10))) >= getLastDay(TODAY_YM);
+  
+  if(currentMonthDays.length > 0 && !currentMonthComplete){
+    targetMonths.push(TODAY_YM);
+  }
+  
+  // 이후 3개월 (당월이 포함되었으면 2개월만 추가)
+  const futureCount = targetMonths.length > 0 ? 2 : 3;
+  let startY = ty, startM = tm + 1;
+  if(startM > 12){ startY++; startM = 1; }
+  
+  // 당월이 미래월로만 예측되는 경우 (일별 데이터 없이 M만 있을 때)
+  if(targetMonths.length === 0){
+    // M의 마지막 월 이후부터
+    const lastM = M.length ? M[M.length-1].m : null;
+    if(lastM){
+      const [lmy, lmm] = lastM.split('-').map(Number);
+      if(lmy * 12 + lmm >= ty * 12 + tm){
+        startY = lmy; startM = lmm + 1;
+        if(startM > 12){ startY++; startM = 1; }
+      } else {
+        startY = ty; startM = tm;
+      }
+    }
+  }
+  
+  for(let i = 0; i < futureCount; i++){
+    let ny = startY, nm = startM + i;
+    if(nm > 12){ ny++; nm -= 12; }
+    const ym = `${ny}-${String(nm).padStart(2,'0')}`;
+    if(!targetMonths.includes(ym)) targetMonths.push(ym);
+  }
+  
+  const results = [];
+  for(const ym of targetMonths){
+    const pred = computePrediction(ym);
     if(pred) results.push(pred);
   }
   return results;
 }
 
 function getDisplayData(ym){
-  const real = M.find(r=>r.m===ym);
-  if(real) return {...real, tp:real.np+real.rp, is_pred:false};
-  return computePrediction(ym);
+  // 1순위: M에 확정 데이터가 있고 해당 월이 완결된 경우
+  const real = M.find(r => r.m === ym);
+  if(real){
+    // 해당 월이 완결되었는지 확인 (일별 데이터로 판단)
+    const monthDays = D.filter(r => r.d.slice(0,7) === ym);
+    const lastDay = getLastDay(ym);
+    const isComplete = monthDays.length === 0 || // 일별 데이터 없으면 M 기준 확정
+      Math.max(...monthDays.map(r => parseInt(r.d.split('-')[2], 10))) >= lastDay;
+    
+    if(isComplete){
+      return {...real, tp: real.np + real.rp, is_pred: false};
+    }
+    // 진행 중인 월이면 intra-month 예측으로 전환
+  }
+  
+  // 2순위: 예측
+  const pred = computePrediction(ym);
+  if(pred) return pred;
+  
+  // 3순위: M 데이터가 있으면 그대로 사용 (부분 확정치라도)
+  if(real) return {...real, tp: real.np + real.rp, is_pred: false};
+  
+  return null;
 }
 
 // ===== EXCEL PARSING =====
@@ -2001,7 +2226,7 @@ function rForecast(el){
     const confLabel = fc.confidence >= 70 ? '높음' : fc.confidence >= 45 ? '보통' : '낮음';
     
     html+=`<div class="fc-card">
-      <span class="fc-method ${fc.used_renewal?'renewal':'seasonal'}">${fc.used_renewal?'도래자 기반':'계절성 기반'}</span>
+      <span class="fc-method ${fc.pred_type==='intra-month'?'intra':fc.used_renewal?'renewal':'seasonal'}">${fc.pred_type==='intra-month'?`진행 중 (${fc.confirmed_days}/${fc.total_days}일)`:fc.used_renewal?'도래자 기반':'WMA 기반'}</span>
       <div class="fc-month">${fc.m}</div>
       <div class="fc-amount">${fmtB(fc.tp)}</div>
       <div class="fc-change"><span class="${momCls}">${momPct||'-'}</span> <span style="color:var(--text3);font-size:11px">vs 최신 실적월</span></div>
@@ -2016,12 +2241,20 @@ function rForecast(el){
         <div class="cb-track"><div class="cb-fill cb-${confLevel}" style="width:${fc.confidence}%"></div></div>
       </div>
       <div class="fc-decomp">
-        <div class="fc-decomp-row"><span class="dl">기준월</span><span class="dv">${fc.base_month}</span></div>
-        <div class="fc-decomp-row"><span class="dl">계절성 (신규/갱신)</span><span class="dv">${fc.season.nc.toFixed(3)} / ${fc.season.rc.toFixed(3)}</span></div>
+        ${fc.pred_type==='intra-month'?`
+        <div class="fc-decomp-row"><span class="dl">예측 방식</span><span class="dv">확정 실적 + 잔여일 추정</span></div>
+        <div class="fc-decomp-row"><span class="dl">데이터 진행률</span><span class="dv">${fc.confirmed_days}일 / ${fc.total_days}일 (${(fc.progress*100).toFixed(0)}%)</span></div>
+        <div class="fc-decomp-row"><span class="dl">확정 신규</span><span class="dv">${fN(fc.confirmed.nc)}건 (${fmtB(fc.confirmed.np)})</span></div>
+        <div class="fc-decomp-row"><span class="dl">확정 갱신</span><span class="dv">${fN(fc.confirmed.rc)}건 (${fmtB(fc.confirmed.rp)})</span></div>
+        <div class="fc-decomp-row"><span class="dl">잔여일 구성</span><span class="dv">영업${fc.remaining_days.biz} / 비영업${fc.remaining_days.wk} / 결제${fc.remaining_days.pay}일</span></div>
+        `:`
+        <div class="fc-decomp-row"><span class="dl">예측 방식</span><span class="dv">최근 3개월 WMA${fc.season.nc !== 1.0 ? ' + 동월보정' : ''}</span></div>
+        <div class="fc-decomp-row"><span class="dl">기준 데이터</span><span class="dv">합병 이후 최근 3개월</span></div>
         <div class="fc-decomp-row"><span class="dl">건당단가 (신규/갱신)</span><span class="dv">${fmt(fc.breakdown.npPer)} / ${fmt(fc.breakdown.rpPer)}</span></div>
-        ${fc.used_renewal?`<div class="fc-decomp-row"><span class="dl">갱신도래자 (월납/연납)</span><span class="dv">${fN(fc.renewal_arrival.m)} / ${fN(fc.renewal_arrival.a)}</span></div>
-        <div class="fc-decomp-row"><span class="dl">적용 갱신율 (월납/연납)</span><span class="dv">${(fc.renewal_rates.monthly*100).toFixed(1)}% / ${(fc.renewal_rates.annual*100).toFixed(1)}%</span></div>`:''}
         <div class="fc-decomp-row"><span class="dl">결제일 스파이크</span><span class="dv">${fmtB(fc.breakdown.payB)}</span></div>
+        `}
+        ${fc.used_renewal&&fc.renewal_arrival?`<div class="fc-decomp-row"><span class="dl">갱신도래자 (월납/연납)</span><span class="dv">${fN(fc.renewal_arrival.m)} / ${fN(fc.renewal_arrival.a)}</span></div>
+        <div class="fc-decomp-row"><span class="dl">적용 갱신율 (월납/연납)</span><span class="dv">${(fc.renewal_rates.monthly*100).toFixed(1)}% / ${(fc.renewal_rates.annual*100).toFixed(1)}%</span></div>`:''}
       </div>
     </div>`;
   }
@@ -2059,7 +2292,7 @@ function rForecast(el){
       <td>${arrivalStr}</td>
       <td>${rateStr}</td>
       <td>${fc.confidence}%</td>
-      <td style="color:var(--text3)">${fc.used_renewal?'도래자 기반':'계절성 기반'}</td>
+      <td style="color:var(--text3)">${fc.pred_type==='intra-month'?`진행 중 (${fc.confirmed_days}/${fc.total_days}일)`:fc.used_renewal?'도래자 기반':'WMA 기반'}</td>
     </tr>`;
   }
   html+='</tbody></table></div></div>';
