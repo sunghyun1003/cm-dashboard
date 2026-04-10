@@ -777,32 +777,63 @@ function calcDailyAvgByType(days){
 }
 
 // --- 채널별 건당단가 (최근 30일, 비결제일) ---
-function calcUnitPriceByChannel(){
-  const recent = getRecentDaysByChannel(30);
-  // 먼저 전체 합계 건당단가 산출 (폴백용)
-  const allDays = getRecentDays(30).filter(r => dayType(r.d) !== 'pay');
-  const totNC = allDays.reduce((s,r) => s+r.nc, 0);
-  const totRC = allDays.reduce((s,r) => s+r.rc, 0);
-  const totNP = allDays.reduce((s,r) => s+r.np, 0);
-  const totRP = allDays.reduce((s,r) => s+r.rp, 0);
-  const totalUnit = { npPer: totNC>0?totNP/totNC:400000, rpPer: totRC>0?totRP/totRC:220000 };
+// --- 건당보험료 산출 ---
+// 핵심: 월 단위 확정 데이터(M)에서 산출해야 정확함
+// 일별 데이터에서 비결제일만 추출하면 결제일 분납/환급 등으로 왜곡됨
+// 월 전체 매출 ÷ 월 전체 건수 = 실제 건당보험료
+function calcUnitPrice(){
+  // 비이상치 최근 완결월 3개월 사용
+  const validM = M.filter(r => !isAnomalyMonth(r.m));
+  // 진행 중인 월(마지막 월이 아직 미완결일 수 있음) 제외를 위해
+  // D에서 마지막 월이 완결되었는지 확인
+  let pool = validM;
+  if(D.length > 0 && validM.length > 0){
+    const lastValidM = validM[validM.length - 1].m;
+    const lastMDays = D.filter(r => r.d.slice(0,7) === lastValidM);
+    if(lastMDays.length > 0){
+      const lastDay = getLastDay(lastValidM);
+      const lastDataDay = Math.max(...lastMDays.map(r => parseInt(r.d.split('-')[2], 10)));
+      if(lastDataDay < lastDay){
+        // 마지막 월이 미완결 → 제외
+        pool = validM.slice(0, -1);
+      }
+    }
+  }
   
-  const result = { '__total': totalUnit };
+  const recent = pool.slice(-3);
+  if(!recent.length) return { npPer: 400000, rpPer: 220000 };
+  
+  const totNC = recent.reduce((s,r) => s + r.nc, 0);
+  const totRC = recent.reduce((s,r) => s + r.rc, 0);
+  const totNP = recent.reduce((s,r) => s + r.np, 0);
+  const totRP = recent.reduce((s,r) => s + r.rp, 0);
+  
+  return {
+    npPer: totNC > 0 ? totNP / totNC : 400000,
+    rpPer: totRC > 0 ? totRP / totRC : 220000,
+  };
+}
+
+// 채널별 건당단가 (채널분석 표시용, 예측에는 미사용)
+function calcUnitPriceByChannel(){
+  const up = calcUnitPrice();
+  const result = { '__total': up };
+  // 채널별은 LM에서 산출
+  const validLM = LM.filter(r => !isAnomalyMonth(r.m));
+  const months = [...new Set(validLM.map(r => r.m))].sort().slice(-3);
   for(const l of LS){
-    const chDays = recent.filter(r => r.l === l && dayType(r.d) !== 'pay');
-    const tNC = chDays.reduce((s,r) => s + r.nc, 0);
-    const tRC = chDays.reduce((s,r) => s + r.rc, 0);
-    const tNP = chDays.reduce((s,r) => s + r.np, 0);
-    const tRP = chDays.reduce((s,r) => s + r.rp, 0);
-    // 건수가 너무 적으면 전체 평균으로 폴백 (왜곡 방지)
+    const chData = validLM.filter(r => months.includes(r.m) && r.l === l);
+    const nc = chData.reduce((s,r) => s+r.nc, 0);
+    const rc = chData.reduce((s,r) => s+r.rc, 0);
+    const np = chData.reduce((s,r) => s+r.np, 0);
+    const rp = chData.reduce((s,r) => s+r.rp, 0);
     result[l] = {
-      npPer: tNC >= 10 ? tNP/tNC : totalUnit.npPer,
-      rpPer: tRC >= 10 ? tRP/tRC : totalUnit.rpPer,
+      npPer: nc >= 10 ? np/nc : up.npPer,
+      rpPer: rc >= 10 ? rp/rc : up.rpPer,
     };
   }
   return result;
 }
-function calcUnitPrice(){ return calcUnitPriceByChannel()['__total']; }
 
 // --- 채널별 건수 비중 (최근 30일) ---
 function getChannelShares(){
@@ -948,12 +979,11 @@ function computeInMonthPrediction(targetYm){
   const predNC=safe(Math.round(confirmed.nc+remNC));
   const predRC=safe(Math.round(confirmed.rc+remRC));
 
-  // 매출: 확정 + 잔여 건수×채널별 건당단가
+  // 매출: 확정 + 잔여 건수 × 건당보험료
+  // (건당보험료는 M 기반 월 전체에서 산출 → 결제일 효과 이미 포함)
   const remRev = countsToRevenue(remNC, remRC);
-  // 결제일 스파이크 잔여분
-  const paySpike = getPaydaySpike() * remPay;
   const predNP = safe(confirmed.np + remRev.np);
-  const predRP = safe(confirmed.rp + remRev.rp + paySpike);
+  const predRP = safe(confirmed.rp + remRev.rp);
   const tp = predNP + predRP;
 
   const confidence = calcConfidence(targetYm, usedRenewal, confirmedDays, lastDay);
@@ -970,7 +1000,7 @@ function computeInMonthPrediction(targetYm){
     confirmed_days:confirmedDays, total_days:lastDay,
     confirmed:confirmed,
     remaining_days:{biz:remBiz,wk:remWk,pay:remPay},
-    breakdown:{npPer:up.npPer, rpPer:up.rpPer, payB:paySpike, gaip:tp, trend_r2:0}
+    breakdown:{npPer:up.npPer, rpPer:up.rpPer, payB:0, gaip:tp, trend_r2:0}
   };
 }
 
@@ -1004,13 +1034,10 @@ function computeFutureMonthPrediction(targetYm){
     }
 
     // 매출 = 건수 × 전체 건당보험료
+    // (건당보험료는 M 기반 월 전체 매출/건수이므로 결제일 효과 이미 포함)
     const rev = countsToRevenue(predNC, predRC);
     let predNP = rev.np;
     let predRP = rev.rp;
-
-    // 결제일 스파이크
-    const paySpike = getPaydaySpike() * comp.pay;
-    predRP += paySpike;
 
     predNP=safe(predNP); predRP=safe(predRP);
     const tp=predNP+predRP;
@@ -1023,7 +1050,7 @@ function computeFutureMonthPrediction(targetYm){
       used_renewal:usedRenewal, renewal_arrival:renewalArrival, renewal_rates:dynRates,
       base_month:baseM?baseM.m:'', season:{nc:tNC,rc:tRC}, comp:comp,
       confidence:confidence, progress:0, confirmed_days:0, total_days:getLastDay(targetYm),
-      breakdown:{npPer:up.npPer, rpPer:up.rpPer, payB:paySpike, gaip:tp, trend_r2:0}
+      breakdown:{npPer:up.npPer, rpPer:up.rpPer, payB:0, gaip:tp, trend_r2:0}
     };
   }
 
