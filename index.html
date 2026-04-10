@@ -825,22 +825,12 @@ function getChannelShares(){
   return shares;
 }
 
-// --- 건수 → 매출 변환 (채널별 건당단가 적용) ---
+// --- 건수 → 매출 변환 (전체 건당보험료 직접 적용) ---
+// 핵심: 신규건당보험료, 갱신건당보험료는 최근 30일 비결제일 전체 합계에서 산출
+// 채널별 세분화하면 share 배분 과정에서 왜곡 발생 → 전체 단가 직접 사용
 function countsToRevenue(nc, rc){
-  const unitPrices = calcUnitPriceByChannel();
-  const shares = getChannelShares();
-  let np = 0, rp = 0;
-  for(const l of LS){
-    const up = unitPrices[l] || unitPrices['__total'];
-    np += nc * shares[l].nc * up.npPer;
-    rp += rc * shares[l].rc * up.rpPer;
-  }
-  // 안전장치: 채널별 합산 결과가 전체 단가 기준과 ±30% 이상 차이나면 전체 단가 사용
-  const totalNP = nc * unitPrices['__total'].npPer;
-  const totalRP = rc * unitPrices['__total'].rpPer;
-  if(totalNP > 0 && (np/totalNP < 0.7 || np/totalNP > 1.3)) np = totalNP;
-  if(totalRP > 0 && (rp/totalRP < 0.7 || rp/totalRP > 1.3)) rp = totalRP;
-  return { np: safe(np), rp: safe(rp) };
+  const up = calcUnitPrice();
+  return { np: safe(nc * up.npPer), rp: safe(rc * up.rpPer) };
 }
 
 // --- 결제일 스파이크 (건당단가 초과분) ---
@@ -1013,7 +1003,7 @@ function computeFutureMonthPrediction(targetYm){
       usedRenewal=true;
     }
 
-    // 매출 = 건수 × 채널별 건당단가
+    // 매출 = 건수 × 전체 건당보험료
     const rev = countsToRevenue(predNC, predRC);
     let predNP = rev.np;
     let predRP = rev.rp;
