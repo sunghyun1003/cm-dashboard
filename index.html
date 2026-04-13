@@ -1213,18 +1213,57 @@ function handleUpload(event){
       }
       const newLM=Object.values(lmMap).sort((a,b)=>a.m.localeCompare(b.m)||LS.indexOf(a.l)-LS.indexOf(b.l));
       
-      // Update globals
-      M.splice(0,M.length,...newM);
-      LM.splice(0,LM.length,...newLM);
-      D.splice(0,D.length,...newD);
-      DL.splice(0,DL.length,...newDL);
+      // Update globals — 기존 데이터와 병합 (같은 날짜는 덮어쓰기, 새 날짜는 추가)
+      
+      // D 병합: 날짜 기준
+      const existingDMap = {};
+      for(const r of D) existingDMap[r.d] = r;
+      for(const r of newD) existingDMap[r.d] = r; // 같은 날짜면 새 데이터로 덮어쓰기
+      const mergedD = Object.values(existingDMap).sort((a,b) => a.d.localeCompare(b.d));
+      
+      // DL 병합: 날짜+채널 기준
+      const existingDLMap = {};
+      for(const r of DL) existingDLMap[r.d + '|' + r.l] = r;
+      for(const r of newDL) existingDLMap[r.d + '|' + r.l] = r;
+      const mergedDL = Object.values(existingDLMap).sort((a,b) => a.d.localeCompare(b.d) || LS.indexOf(a.l) - LS.indexOf(b.l));
+      
+      // M 재집계: 병합된 D에서 월별 합산
+      const mergedMonthMap = {};
+      for(const r of mergedD){
+        const m = r.d.slice(0,7);
+        if(!mergedMonthMap[m]) mergedMonthMap[m] = {m, nc:0, rc:0, np:0, rp:0};
+        mergedMonthMap[m].nc += r.nc;
+        mergedMonthMap[m].rc += r.rc;
+        mergedMonthMap[m].np += r.np;
+        mergedMonthMap[m].rp += r.rp;
+      }
+      const mergedM = Object.values(mergedMonthMap).sort((a,b) => a.m.localeCompare(b.m));
+      
+      // LM 재집계: 병합된 DL에서 월×채널별 합산
+      const mergedLMMap = {};
+      for(const r of mergedDL){
+        const key = r.d.slice(0,7) + '|' + r.l;
+        if(!mergedLMMap[key]) mergedLMMap[key] = {m: r.d.slice(0,7), l: r.l, nc:0, rc:0, np:0, rp:0};
+        mergedLMMap[key].nc += r.nc;
+        mergedLMMap[key].rc += r.rc;
+        mergedLMMap[key].np += r.np;
+        mergedLMMap[key].rp += r.rp;
+      }
+      const mergedLM = Object.values(mergedLMMap).sort((a,b) => a.m.localeCompare(b.m) || LS.indexOf(a.l) - LS.indexOf(b.l));
+      
+      // 전역 변수 갱신
+      M.splice(0, M.length, ...mergedM);
+      LM.splice(0, LM.length, ...mergedLM);
+      D.splice(0, D.length, ...mergedD);
+      DL.splice(0, DL.length, ...mergedDL);
       
       buildAllMonths();
       
       // Update status
-      const mCount=newM.length;
-      const dCount=newD.length;
-      statusEl.textContent=`✅ ${file.name} — ${mCount}개월, ${dCount}일 업로드 완료`;
+      const mCount=mergedM.length;
+      const dCount=mergedD.length;
+      const newDCount=newD.length;
+      statusEl.textContent=`✅ ${file.name} — ${newDCount}일 업로드 (누적 ${mCount}개월, ${dCount}일)`;
       
       document.getElementById('data-badges').innerHTML=
         `<span class="badge badge-m">${mCount}개월</span>`+
